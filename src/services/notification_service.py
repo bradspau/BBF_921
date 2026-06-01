@@ -10,6 +10,9 @@ import asyncio
 import logging
 import uuid
 from datetime import datetime, timezone
+
+# Strong references prevent the event loop's weak-ref from GC'ing tasks mid-run.
+_background_tasks: set[asyncio.Task] = set()
 from typing import Any
 
 import httpx
@@ -86,4 +89,7 @@ class NotificationService:
         resource: dict[str, Any],
     ) -> asyncio.Task[None]:
         """Schedule fire() as a background task (non-blocking)."""
-        return asyncio.create_task(self.fire(event_type, resource))
+        task = asyncio.create_task(self.fire(event_type, resource))
+        _background_tasks.add(task)
+        task.add_done_callback(_background_tasks.discard)
+        return task

@@ -8,6 +8,9 @@ IntentReport via the internal IntentReportRepository.
 from __future__ import annotations
 
 import asyncio
+
+# Strong references prevent the event loop's weak-ref from GC'ing tasks mid-run.
+_background_tasks: set[asyncio.Task] = set()
 import logging
 import uuid
 from datetime import datetime, timezone
@@ -88,7 +91,10 @@ def schedule_evaluation(
     Returns the asyncio.Task so callers can await or cancel if needed.
     The task never raises — all errors are logged internally.
     """
-    return asyncio.create_task(
+    task = asyncio.create_task(
         dispatch_evaluation(intent_id, client, report_repo, hub_repo),
         name=f"eval-{intent_id}",
     )
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
+    return task
