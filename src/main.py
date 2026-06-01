@@ -6,7 +6,7 @@ from __future__ import annotations
 import logging
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Response
 
 from src.api.error_handlers import register_handlers
 from src.api.routers import intent, intent_report, intent_spec, hub
@@ -44,10 +44,12 @@ app.include_router(hub.router,           prefix=_BASE)
 
 
 @app.get("/health", tags=["health"])
-async def health() -> dict:
+async def health(response: Response) -> dict:
     client = get_client()
     graph_up = await client.health()
+    if not graph_up:
+        response.status_code = 503
     return {
-        "status": "UP",
+        "status": "UP" if graph_up else "DOWN",
         "graph":  "UP" if graph_up else "DOWN",
     }

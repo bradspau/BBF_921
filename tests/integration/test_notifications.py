@@ -314,7 +314,7 @@ class TestHealthEndpoint:
 
         resp = tc.get("/health")
 
-        assert resp.status_code == 200
+        assert resp.status_code == 503
         body = resp.json()
-        assert body["status"] == "UP"
+        assert body["status"] == "DOWN"
         assert body["graph"] == "DOWN"

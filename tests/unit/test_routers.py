@@ -623,8 +623,8 @@ class TestHealthEndpoint:
                 store_module._client = mock_client
                 r = client.get("/health")
 
-        assert r.status_code == 200
-        assert r.json() == {"status": "UP", "graph": "DOWN"}
+        assert r.status_code == 503
+        assert r.json() == {"status": "DOWN", "graph": "DOWN"}
 
 
 # ── Error body format ─────────────────────────────────────────────────────────
