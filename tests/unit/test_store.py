@@ -72,8 +72,9 @@ class TestNodes:
         assert str(uri) == "http://tmforum.org/api/v5/audit/abc-123"
 
     def test_eval_graph_uri(self):
-        uri = nodes.eval_graph_uri("abc-123")
-        assert str(uri) == "http://tmforum.org/api/v5/eval/abc-123"
+        run_id = "run-456"
+        uri = nodes.eval_graph_uri("abc-123", run_id)
+        assert str(uri) == "http://tmforum.org/api/v5/eval/abc-123/run-456"
 
     def test_intent_node_equals_intent_graph(self):
         assert nodes.intent_node("x") == nodes.intent_graph_uri("x")

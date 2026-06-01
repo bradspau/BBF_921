@@ -29,9 +29,9 @@ def audit_graph_uri(intent_id: str) -> URIRef:
     return URIRef(f"{_BASE}/audit/{intent_id}")
 
 
-def eval_graph_uri(intent_id: str) -> URIRef:
-    """Named graph URI for a temporary intent handler evaluation graph."""
-    return URIRef(f"{_BASE}/eval/{intent_id}")
+def eval_graph_uri(intent_id: str, run_id: str) -> URIRef:
+    """Named graph URI for a single evaluation run — unique per run to avoid concurrent-eval races."""
+    return URIRef(f"{_BASE}/eval/{intent_id}/{run_id}")
 
 
 # Resource node URIs (same as named graph URIs — each resource is its own graph subject)

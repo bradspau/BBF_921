@@ -15,6 +15,7 @@ if no Turtle is available the handler defaults to Degraded.
 from __future__ import annotations
 
 import logging
+import uuid
 
 from src.graph.namespaces import ONTOLOGY_GRAPH
 from src.graph.nodes import eval_graph_uri, intent_graph_uri, intent_node
@@ -71,7 +72,7 @@ async def evaluate_intent(intent_id: str, client: FusekiClient) -> dict:
     """
     graph_uri = str(intent_graph_uri(intent_id))
     node_uri = str(intent_node(intent_id))
-    eval_graph = str(eval_graph_uri(intent_id))
+    eval_graph = str(eval_graph_uri(intent_id, str(uuid.uuid4())))
 
     # Step 1 — fetch expressionType and expressionValue from the intent graph
     rows = await client.query(
