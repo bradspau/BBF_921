@@ -24,10 +24,11 @@ from src.api import deps
 
 # ── Shared intent fixture data ────────────────────────────────────────────────
 
-INTENT_ID  = "intent-aaa"
-REPORT_ID  = "report-bbb"
-SPEC_ID    = "spec-ccc"
-HUB_ID     = "hub-ddd"
+INTENT_ID  = "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa"
+REPORT_ID  = "bbbbbbbb-bbbb-4bbb-bbbb-bbbbbbbbbbbb"
+SPEC_ID    = "cccccccc-cccc-4ccc-cccc-cccccccccccc"
+HUB_ID     = "dddddddd-dddd-4ddd-dddd-dddddddddddd"
+MISSING_ID = "ffffffff-ffff-4fff-bfff-ffffffffffff"
 
 _INTENT = {
     "id":              INTENT_ID,
@@ -163,7 +164,7 @@ class TestIntentRouter:
         )
         with TestClient(app) as client:
             app.dependency_overrides[deps.get_intent_service] = lambda: svc
-            r = client.get(f"{BASE}/intent/missing")
+            r = client.get(f"{BASE}/intent/{MISSING_ID}")
         app.dependency_overrides.clear()
         assert r.status_code == 404
         body = r.json()
@@ -267,7 +268,7 @@ class TestIntentRouter:
         with TestClient(app) as client:
             app.dependency_overrides[deps.get_intent_service] = lambda: svc
             r = client.patch(
-                f"{BASE}/intent/missing",
+                f"{BASE}/intent/{MISSING_ID}",
                 json={"name": "x"},
                 headers={"Content-Type": "application/json"},
             )
@@ -289,7 +290,7 @@ class TestIntentRouter:
         )
         with TestClient(app) as client:
             app.dependency_overrides[deps.get_intent_service] = lambda: svc
-            r = client.delete(f"{BASE}/intent/missing")
+            r = client.delete(f"{BASE}/intent/{MISSING_ID}")
         app.dependency_overrides.clear()
         assert r.status_code == 404
 
@@ -346,7 +347,7 @@ class TestIntentReportRouter:
         with TestClient(app) as client:
             app.dependency_overrides[deps.get_intent_report_service] = lambda: svc
             r = client.get(
-                f"{BASE}/intent/{INTENT_ID}/intentReport/missing"
+                f"{BASE}/intent/{INTENT_ID}/intentReport/{MISSING_ID}"
             )
         app.dependency_overrides.clear()
         assert r.status_code == 404
@@ -370,7 +371,7 @@ class TestIntentReportRouter:
         with TestClient(app) as client:
             app.dependency_overrides[deps.get_intent_report_service] = lambda: svc
             r = client.delete(
-                f"{BASE}/intent/{INTENT_ID}/intentReport/missing"
+                f"{BASE}/intent/{INTENT_ID}/intentReport/{MISSING_ID}"
             )
         app.dependency_overrides.clear()
         assert r.status_code == 404
@@ -414,7 +415,7 @@ class TestIntentSpecRouter:
         )
         with TestClient(app) as client:
             app.dependency_overrides[deps.get_intent_spec_service] = lambda: svc
-            r = client.get(f"{BASE}/intentSpecification/missing")
+            r = client.get(f"{BASE}/intentSpecification/{MISSING_ID}")
         app.dependency_overrides.clear()
         assert r.status_code == 404
         assert r.json()["@type"] == "Error"
@@ -489,7 +490,7 @@ class TestIntentSpecRouter:
         with TestClient(app) as client:
             app.dependency_overrides[deps.get_intent_spec_service] = lambda: svc
             r = client.patch(
-                f"{BASE}/intentSpecification/missing",
+                f"{BASE}/intentSpecification/{MISSING_ID}",
                 json={"name": "x"},
                 headers={"Content-Type": "application/json"},
             )
@@ -511,7 +512,7 @@ class TestIntentSpecRouter:
         )
         with TestClient(app) as client:
             app.dependency_overrides[deps.get_intent_spec_service] = lambda: svc
-            r = client.delete(f"{BASE}/intentSpecification/missing")
+            r = client.delete(f"{BASE}/intentSpecification/{MISSING_ID}")
         app.dependency_overrides.clear()
         assert r.status_code == 404
 
@@ -552,7 +553,7 @@ class TestHubRouter:
         repo = _mock_hub_repo(delete=False)
         with TestClient(app) as client:
             app.dependency_overrides[deps.get_hub_repo] = lambda: repo
-            r = client.delete(f"{BASE}/hub/missing")
+            r = client.delete(f"{BASE}/hub/{MISSING_ID}")
         app.dependency_overrides.clear()
         assert r.status_code == 404
         assert r.json()["@type"] == "Error"
@@ -636,12 +637,12 @@ class TestErrorBodyFormat:
         )
         with TestClient(app) as client:
             app.dependency_overrides[deps.get_intent_service] = lambda: svc
-            r = client.get(f"{BASE}/intent/missing")
+            r = client.get(f"{BASE}/intent/{MISSING_ID}")
         app.dependency_overrides.clear()
         body = r.json()
         assert body["code"] == "404"
         assert body["reason"] == "Not Found"
-        assert "missing" in body["message"] or INTENT_ID in body["message"]
+        assert INTENT_ID in body["message"]
         assert body["@type"] == "Error"
 
     def test_400_body_format(self) -> None:

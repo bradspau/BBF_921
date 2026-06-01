@@ -10,7 +10,9 @@ Endpoints:
 """
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
+from typing import Annotated
+
+from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request, Response
 from fastapi.responses import Response as _Response
 
 from src.api.deps import get_intent_spec_service
@@ -20,6 +22,8 @@ from src.services.intent_spec_service import IntentSpecService
 router = APIRouter(tags=["intentSpecification"])
 
 _PATCH_TYPES = {"application/json", "application/merge-patch+json"}
+
+_UUIDPath = Annotated[str, Path(pattern=r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")]
 
 
 @router.get("/intentSpecification")
@@ -45,7 +49,7 @@ async def list_intent_specs(
 
 @router.get("/intentSpecification/{spec_id}")
 async def get_intent_spec(
-    spec_id: str,
+    spec_id: _UUIDPath,
     fields: str | None = Query(default=None),
     service: IntentSpecService = Depends(get_intent_spec_service),
 ) -> dict:
@@ -64,7 +68,7 @@ async def create_intent_spec(
 
 @router.patch("/intentSpecification/{spec_id}")
 async def patch_intent_spec(
-    spec_id: str,
+    spec_id: _UUIDPath,
     request: Request,
     service: IntentSpecService = Depends(get_intent_spec_service),
 ) -> dict:
@@ -81,7 +85,7 @@ async def patch_intent_spec(
     response_class=_Response,
 )
 async def delete_intent_spec(
-    spec_id: str,
+    spec_id: _UUIDPath,
     service: IntentSpecService = Depends(get_intent_spec_service),
 ) -> _Response:
     await service.delete(spec_id)

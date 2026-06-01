@@ -22,8 +22,9 @@ from tests.integration.conftest import (
     sparql_bindings,
 )
 
-HUB_ID    = "hub-aaa-111"
-INTENT_ID = "intent-nnn-001"
+HUB_ID     = "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa"
+INTENT_ID  = "bbbbbbbb-bbbb-4bbb-bbbb-bbbbbbbbbbbb"
+MISSING_ID = "ffffffff-ffff-4fff-bfff-ffffffffffff"
 CALLBACK  = "http://listener.example.com/events"
 
 SPARQL = f"{FUSEKI}/{DATASET}/sparql"
@@ -94,7 +95,7 @@ class TestHubDelete:
             return_value=httpx.Response(200, json=ask_response(False))
         )
 
-        resp = tc.delete(f"{BASE}/hub/nonexistent")
+        resp = tc.delete(f"{BASE}/hub/{MISSING_ID}")
 
         assert resp.status_code == 404
         body = resp.json()

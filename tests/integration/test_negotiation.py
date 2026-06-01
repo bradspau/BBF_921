@@ -20,8 +20,8 @@ from tests.integration.conftest import (
     sparql_bindings,
 )
 
-INTENT_ID = "owner-intent-001"
-PROBE_ID  = "probe-intent-001"
+INTENT_ID = "cccccccc-cccc-4ccc-cccc-cccccccccccc"
+PROBE_ID  = "dddddddd-dddd-4ddd-dddd-dddddddddddd"
 
 SPARQL = f"{FUSEKI}/{DATASET}/sparql"
 UPDATE = f"{FUSEKI}/{DATASET}/update"

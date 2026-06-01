@@ -20,7 +20,8 @@ from tests.integration.conftest import (
     sparql_bindings,
 )
 
-INTENT_ID = "aaa-111"
+INTENT_ID  = "eeeeeeee-eeee-4eee-aeee-eeeeeeeeeeee"
+MISSING_ID = "ffffffff-ffff-4fff-bfff-ffffffffffff"
 SPARQL = f"{FUSEKI}/{DATASET}/sparql"
 UPDATE = f"{FUSEKI}/{DATASET}/update"
 DATA   = f"{FUSEKI}/{DATASET}/data"
@@ -123,7 +124,7 @@ class TestGetIntent:
             return_value=httpx.Response(200, json=sparql_bindings())
         )
 
-        resp = tc.get(f"{BASE}/intent/nonexistent")
+        resp = tc.get(f"{BASE}/intent/{MISSING_ID}")
 
         assert resp.status_code == 404
         body = resp.json()
@@ -152,7 +153,7 @@ class TestGetIntent:
             return_value=httpx.Response(200, json=sparql_bindings())
         )
 
-        resp = tc.get(f"{BASE}/intent/missing")
+        resp = tc.get(f"{BASE}/intent/{MISSING_ID}")
 
         assert resp.status_code == 404
         body = resp.json()
@@ -254,7 +255,7 @@ class TestPatchIntent:
         )
 
         resp = tc.patch(
-            f"{BASE}/intent/nonexistent",
+            f"{BASE}/intent/{MISSING_ID}",
             json={"name": "New Name"},
             headers={"Content-Type": "application/merge-patch+json"},
         )
@@ -320,7 +321,7 @@ class TestDeleteIntent:
             return_value=httpx.Response(200, json=ask_response(False))
         )
 
-        resp = tc.delete(f"{BASE}/intent/nonexistent")
+        resp = tc.delete(f"{BASE}/intent/{MISSING_ID}")
 
         assert resp.status_code == 404
         assert resp.json()["@type"] == "Error"

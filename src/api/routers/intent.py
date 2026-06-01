@@ -10,7 +10,9 @@ Endpoints:
 """
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Query, Request, Response, HTTPException
+from typing import Annotated
+
+from fastapi import APIRouter, Depends, Path, Query, Request, Response, HTTPException
 from fastapi.responses import Response as _Response
 
 from src.api.deps import get_intent_service
@@ -20,6 +22,8 @@ from src.services.intent_service import IntentService
 router = APIRouter(tags=["intent"])
 
 _PATCH_TYPES = {"application/json", "application/merge-patch+json"}
+
+_UUIDPath = Annotated[str, Path(pattern=r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")]
 
 
 @router.get("/intent")
@@ -45,7 +49,7 @@ async def list_intents(
 
 @router.get("/intent/{intent_id}")
 async def get_intent(
-    intent_id: str,
+    intent_id: _UUIDPath,
     fields: str | None = Query(default=None),
     service: IntentService = Depends(get_intent_service),
 ) -> dict:
@@ -64,7 +68,7 @@ async def create_intent(
 
 @router.patch("/intent/{intent_id}")
 async def patch_intent(
-    intent_id: str,
+    intent_id: _UUIDPath,
     request: Request,
     service: IntentService = Depends(get_intent_service),
 ) -> dict:
@@ -77,7 +81,7 @@ async def patch_intent(
 
 @router.delete("/intent/{intent_id}", status_code=204, response_class=_Response)
 async def delete_intent(
-    intent_id: str,
+    intent_id: _UUIDPath,
     service: IntentService = Depends(get_intent_service),
 ) -> _Response:
     await service.delete(intent_id)
