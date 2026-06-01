@@ -1,0 +1,32 @@
+services:
+  fuseki:
+    image: stain/jena-fuseki:5.2.0
+    environment:
+      ADMIN_PASSWORD: admin
+      FUSEKI_DATASET_1: tmf921
+      JVM_ARGS: -Xmx2g
+    volumes:
+      - fuseki_data:/fuseki/databases
+    ports:
+      - "3030:3030"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3030/$/ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+
+  app:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      FUSEKI_BASE_URL: http://fuseki:3030
+      FUSEKI_DATASET: tmf921
+      LOG_LEVEL: info
+    depends_on:
+      fuseki:
+        condition: service_healthy
+
+volumes:
+  fuseki_data:
