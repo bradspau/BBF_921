@@ -209,3 +209,135 @@ class TestJudgePreferenceFlow:
         )
 
         assert resp.status_code == 200
+
+
+# ── Full 3-step Probe Intent negotiation flow ─────────────────────────────────
+
+class TestFullProbeIntentNegotiationFlow:
+    """
+    TMF921A §4.2 Probe Intent Flow — end-to-end integration.
+
+    Per docs/06-negotiation.md:
+      1. Owner   POST /intent  (@type: Intent)
+      2. Handler POST /intent  (@type: ProbeIntent, intentRelationship → owner id)
+      3. Owner   PATCH /intent/{probeId}  (accept or reject via lifecycleStatus)
+
+    IntentRepository.create() returns the input payload dict directly (no SELECT
+    after INSERT), so the server-assigned UUID from step 1/2 is the real id.
+    All SPARQL calls in steps 1 & 2 are background hub-list queries; we return
+    empty so they are no-ops.  Steps 3 sequences three specific SPARQL responses.
+    """
+
+    @respx.mock
+    def test_three_step_owner_post_probe_post_accept(self, tc):
+        """Step 3 accepts the ProbeIntent by transitioning to ACTIVE."""
+        probe_acked  = probe_row("probe-aaa", lifecycle_status="ACKNOWLEDGED")
+        probe_active = probe_row("probe-aaa", lifecycle_status="ACTIVE")
+
+        intent_select_n = [0]
+
+        def sparql_dispatch(request, **_):
+            body = request.content.decode()
+            # Hub list queries contain the hubs graph URI — always return no hubs.
+            # This handles both the pre-patch background notifications AND the
+            # post-patch notification background task, regardless of timing.
+            if "hubs" in body:
+                return httpx.Response(200, json=sparql_bindings())
+            # All other SELECT calls are intent get_by_id queries from the PATCH step.
+            intent_select_n[0] += 1
+            n = intent_select_n[0]
+            if n == 1:
+                # service.update get_by_id existing (ACKNOWLEDGED)
+                return httpx.Response(200, json=sparql_bindings(probe_acked))
+            if n == 2:
+                # repo.update internal get_by_id after UPDATE (ACTIVE)
+                return httpx.Response(200, json=sparql_bindings(probe_active))
+            return httpx.Response(200, json=sparql_bindings())
+
+        respx.post(SPARQL).mock(side_effect=sparql_dispatch)
+        respx.post(UPDATE).mock(return_value=httpx.Response(200))
+
+        # ── Step 1: Owner creates parent Intent ───────────────────────────────
+        r1 = tc.post(f"{BASE}/intent", json=_OWNER_INTENT)
+        assert r1.status_code == 201
+        owner_id = r1.json()["id"]
+        assert r1.json()["@type"] == "Intent"
+        assert owner_id  # server-assigned UUID
+
+        # ── Step 2: Handler creates ProbeIntent referencing the owner ─────────
+        probe_payload = {
+            "name": "Handler Probe",
+            "@type": "ProbeIntent",
+            "expression": _OWNER_INTENT["expression"],
+            "intentRelationship": [{
+                "@type":            "IntentRelationship",
+                "id":               owner_id,
+                "relationshipType": "relatesTo",
+                "referredType":     "Intent",
+            }],
+        }
+        r2 = tc.post(f"{BASE}/intent", json=probe_payload)
+        assert r2.status_code == 201
+        probe_id = r2.json()["id"]
+        assert r2.json()["@type"] == "ProbeIntent"
+        assert probe_id != owner_id  # each resource gets a distinct server UUID
+
+        # ── Step 3: Owner accepts ProbeIntent → ACTIVE ────────────────────────
+        r3 = tc.patch(
+            f"{BASE}/intent/{probe_id}",
+            json={"lifecycleStatus": "ACTIVE"},
+            headers={"Content-Type": "application/merge-patch+json"},
+        )
+        assert r3.status_code == 200
+        assert r3.json()["lifecycleStatus"] == "ACTIVE"
+
+    @respx.mock
+    def test_three_step_owner_post_probe_post_reject(self, tc):
+        """Step 3 rejects the ProbeIntent by transitioning to TERMINATED."""
+        probe_acked      = probe_row("probe-bbb", lifecycle_status="ACKNOWLEDGED")
+        probe_terminated = probe_row("probe-bbb", lifecycle_status="TERMINATED")
+
+        intent_select_n = [0]
+
+        def sparql_dispatch(request, **_):
+            body = request.content.decode()
+            if "hubs" in body:
+                return httpx.Response(200, json=sparql_bindings())
+            intent_select_n[0] += 1
+            n = intent_select_n[0]
+            if n == 1:
+                return httpx.Response(200, json=sparql_bindings(probe_acked))
+            if n == 2:
+                return httpx.Response(200, json=sparql_bindings(probe_terminated))
+            return httpx.Response(200, json=sparql_bindings())
+
+        respx.post(SPARQL).mock(side_effect=sparql_dispatch)
+        respx.post(UPDATE).mock(return_value=httpx.Response(200))
+
+        r1 = tc.post(f"{BASE}/intent", json=_OWNER_INTENT)
+        assert r1.status_code == 201
+        owner_id = r1.json()["id"]
+
+        probe_payload = {
+            "name": "Handler Probe to Reject",
+            "@type": "ProbeIntent",
+            "expression": _OWNER_INTENT["expression"],
+            "intentRelationship": [{
+                "@type":            "IntentRelationship",
+                "id":               owner_id,
+                "relationshipType": "relatesTo",
+                "referredType":     "Intent",
+            }],
+        }
+        r2 = tc.post(f"{BASE}/intent", json=probe_payload)
+        assert r2.status_code == 201
+        probe_id = r2.json()["id"]
+
+        # Owner rejects (ACKNOWLEDGED → TERMINATED is a valid FSM transition)
+        r3 = tc.patch(
+            f"{BASE}/intent/{probe_id}",
+            json={"lifecycleStatus": "TERMINATED"},
+            headers={"Content-Type": "application/merge-patch+json"},
+        )
+        assert r3.status_code == 200
+        assert r3.json()["lifecycleStatus"] == "TERMINATED"

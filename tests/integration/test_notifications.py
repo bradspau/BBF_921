@@ -221,6 +221,78 @@ class TestNotificationFanOut:
 
 # ── Health endpoint ───────────────────────────────────────────────────────────
 
+# ── Notification payload conformance ─────────────────────────────────────────
+
+class TestNotificationPayloadConformance:
+    """
+    Validates that notification payloads conform to the TMF event envelope.
+
+    Per docs/05-notifications.md the payload must include:
+      correlationId, eventId, eventTime, eventType, event, @baseType, @type
+
+    This is a service-level integration test: NotificationService + HubRepository
+    + FusekiClient work together with only the Fuseki HTTP boundary mocked.
+    """
+
+    @respx.mock
+    async def test_intent_create_event_tmf_envelope_structure(self):
+        """IntentCreateEvent payload includes all mandatory TMF envelope fields."""
+        import json as _json
+        from src.graph.store import FusekiClient as _FC
+        from src.graph.repositories.hub_repository import HubRepository as _HR
+        from src.services.notification_service import NotificationService as _NS, EventType
+
+        CALLBACK_LOCAL = "http://conformance-listener.example.com/events"
+        captured: list[dict] = []
+
+        # Real FusekiClient with respx-intercepted httpx calls
+        fk = _FC(base_url=FUSEKI, dataset=DATASET)
+        fk._http = httpx.AsyncClient(base_url=FUSEKI)
+
+        # Hub list → returns one subscriber
+        respx.post(f"{FUSEKI}/{DATASET}/sparql").mock(
+            return_value=httpx.Response(
+                200,
+                json=sparql_bindings(hub_row("h-conformance", CALLBACK_LOCAL)),
+            )
+        )
+
+        def _capture(request, **_):
+            captured.append(_json.loads(request.content))
+            return httpx.Response(200)
+
+        respx.post(CALLBACK_LOCAL).mock(side_effect=_capture)
+
+        svc = _NS(_HR(fk))
+        resource = {
+            "id":              "conform-001",
+            "@type":           "Intent",
+            "name":            "Conformance Test Intent",
+            "lifecycleStatus": "ACKNOWLEDGED",
+        }
+        await svc.fire(EventType.INTENT_CREATE, resource)
+
+        assert len(captured) == 1, "Expected exactly one callback POST"
+        p = captured[0]
+
+        # Validate all mandatory TMF event envelope fields
+        assert "eventId" in p,       "Missing eventId"
+        assert "correlationId" in p, "Missing correlationId"
+        assert "eventTime" in p,     "Missing eventTime"
+        assert p["eventType"] == EventType.INTENT_CREATE, (
+            f"eventType mismatch: got {p['eventType']!r}"
+        )
+        assert p["@type"] == EventType.INTENT_CREATE, (
+            f"@type mismatch: got {p['@type']!r}"
+        )
+        assert p["@baseType"] == "Event", (
+            f"@baseType mismatch: got {p['@baseType']!r}"
+        )
+        assert "event" in p, "Missing event field"
+        assert p["event"]["id"] == "conform-001"
+        assert p["event"]["@type"] == "Intent"
+
+
 class TestHealthEndpoint:
     @respx.mock
     def test_health_up(self, tc):
