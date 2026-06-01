@@ -1,0 +1,98 @@
+╔══════════════════════════════════════════════════════════════════════════════╗
+║                              HTTP CLIENT                                     ║
+║           Postman · curl · seed_data/seed_intents.py                        ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+                                     │  REST / JSON
+                                     ▼
+╔══════════════════════════════════════════════════════════════════════════════╗
+║                           API LAYER  (src/api/)                              ║
+║                                                                              ║
+║   intent.py          intent_report.py      intent_spec.py       hub.py       ║
+║   GET/POST           GET/DELETE            GET/POST             POST/DELETE  ║
+║   PATCH/DELETE       (read-only)           PATCH/DELETE                      ║
+║                                                                              ║
+║                     error_handlers.py   fields_filter.py                    ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+                │                                      │
+         deps.py injects                        deps.py injects
+                │                                      │
+                ▼                                      ▼
+╔═══════════════════════════════╗      ╔══════════════════════════════════════╗
+║      SERVICE LAYER            ║      ║        NOTIFICATION SERVICE          ║
+║      (src/services/)          ║      ║        (src/services/)               ║
+║                               ║      ║                                      ║
+║  IntentService                ║─────▶║  NotificationService                 ║
+║  IntentReportService          ║      ║  · builds TMF event envelope         ║
+║  IntentSpecService            ║      ║  · asyncio.create_task fan-out       ║
+║                               ║      ║  · fire-and-forget HTTP POST         ║
+║  state_machine.py             ║      ║    to each hub callback              ║
+║  · validate_transition()      ║      ║                                      ║
+╚═══════════════════════════════╝      ╚══════════════════════════════════════╝
+                │                                      │
+                │  schedule_evaluation()               │  list_matching()
+                │  asyncio.create_task                 │  (SPARQL)
+                │  (fire-and-forget)                   │
+                ▼                                      │
+╔═══════════════════════════════╗                      │
+║     INTENT HANDLER            ║                      │
+║     (src/handler/)            ║                      │
+║                               ║                      │
+║  dispatcher.py                ║                      │
+║  · schedule_evaluation()      ║                      │
+║  · dispatch_evaluation()      ║                      │
+║        │                      ║                      │
+║        ▼                      ║                      │
+║  evaluator.py                 ║                      │
+║  · query expression from      ║                      │
+║    intent named graph         ║                      │
+║  · load Turtle into           ║                      │
+║    eval graph (temp)          ║                      │
+║  · query intentHandlingState  ║                      │
+║  · DROP eval graph            ║                      ║
+╚═══════════════════════════════╝                      │
+                │                                      │
+       write IntentReport                              │
+                │                                      │
+                ▼                                      ▼
+╔══════════════════════════════════════════════════════════════════════════════╗
+║                       REPOSITORY LAYER  (src/graph/repositories/)            ║
+║                                                                              ║
+║  IntentRepository        IntentReportRepository    IntentSpecRepository      ║
+║  · SPARQL SELECT/INSERT  · SPARQL SELECT/INSERT    · SPARQL SELECT/INSERT   ║
+║  · GSP PUT/DELETE        · GSP DROP                · GSP PUT/DELETE         ║
+║  · write_state_change()                                                      ║
+║                          HubRepository                                       ║
+║                          · SPARQL SELECT/INSERT/DELETE                       ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+                                     │
+                           SPARQL 1.1 HTTP
+                           Graph Store Protocol
+                                     │
+                                     ▼
+╔══════════════════════════════════════════════════════════════════════════════╗
+║                    FusekiClient  (src/graph/store.py)                        ║
+║                                                                              ║
+║   query()   ask()   update()   gsp_put()   gsp_post()   gsp_get()           ║
+║   gsp_delete()   health()   ensure_dataset()                                 ║
+║                                                                              ║
+║                    httpx.AsyncClient  (single shared instance)               ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+                                     │
+                              HTTP :3030
+                                     │
+                                     ▼
+╔══════════════════════════════════════════════════════════════════════════════╗
+║                    APACHE JENA FUSEKI  (TDB2)                                ║
+║                                                                              ║
+║   intents/{id}              ── one graph per Intent / ProbeIntent            ║
+║   reports/{id}              ── one graph per IntentReport                    ║
+║   intentSpecifications/{id} ── one graph per IntentSpecification             ║
+║   hubs                      ── all Hub subscription triples                  ║
+║   audit/{id}                ── immutable StateChange records                 ║
+║   eval/{id}                 ── ephemeral; created and dropped per evaluation ║
+║   ontology                  ── read-only TIO ontology TTL files              ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+
+
+── Sync call (blocks until response)
+──▶ Async / background  (asyncio.create_task, fire-and-forget)

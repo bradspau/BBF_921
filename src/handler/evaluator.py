@@ -16,13 +16,16 @@ from __future__ import annotations
 
 import logging
 
+from src.graph.namespaces import ONTOLOGY_GRAPH
 from src.graph.nodes import eval_graph_uri, intent_graph_uri, intent_node
 from src.graph.repositories.base_repository import PREFIXES
 from src.graph.store import FusekiClient
 
 logger = logging.getLogger(__name__)
 
-_IMO = "http://tio.models.tmforum.org/tio/v3.6.0/IntentManagmentOntology#"
+# Correct TIO v3.6.0 namespace URIs (slash separator, no typo)
+_ICM = "http://tio.models.tmforum.org/tio/v3.6.0/IntentCommonModel/"
+_IMO = "http://tio.models.tmforum.org/tio/v3.6.0/IntentManagementOntology/"
 
 _INTENT_QUERY = """\
 {prefixes}
@@ -36,12 +39,24 @@ WHERE {{
 }}
 """
 
+# Query the eval graph for a handling state, validated against the ontology graph.
+# icm:intentHandlingState — canonical property from IntentCommonModel.ttl
+# imo:handlingState       — alternative assignment property from IntentManagementOntology.ttl
+# The GRAPH <ontology_graph> clause ensures the state value is a known
+# imo:IntentHandlingState individual, making the ontology an active participant.
 _STATE_QUERY = """\
+PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+PREFIX icm: <{icm}>
 PREFIX imo: <{imo}>
 SELECT ?state
 WHERE {{
     GRAPH <{eval_graph}> {{
-        ?s imo:intentHandlingState ?state .
+        {{ ?s icm:intentHandlingState ?state }}
+        UNION
+        {{ ?s imo:handlingState ?state }}
+    }}
+    GRAPH <{ontology_graph}> {{
+        ?state rdf:type imo:IntentHandlingState .
     }}
 }}
 LIMIT 1
@@ -95,10 +110,15 @@ async def evaluate_intent(intent_id: str, client: FusekiClient) -> dict:
         logger.error("evaluate_intent: gsp_post failed for %s: %s", intent_id, exc)
         return {"intentHandlingState": "Degraded", "reason": f"Expression load failed: {exc}"}
 
-    # Step 3 — query inferred intentHandlingState
+    # Step 3 — query inferred intentHandlingState, validated against ontology graph
     try:
         state_rows = await client.query(
-            _STATE_QUERY.format(imo=_IMO, eval_graph=eval_graph)
+            _STATE_QUERY.format(
+                icm=_ICM,
+                imo=_IMO,
+                eval_graph=eval_graph,
+                ontology_graph=str(ONTOLOGY_GRAPH),
+            )
         )
         if state_rows:
             raw = (state_rows[0].get("state") or {}).get("value", "")

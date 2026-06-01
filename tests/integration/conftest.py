@@ -92,3 +92,21 @@ def tc():
     """TestClient that exercises the full app stack (services + repositories)."""
     with TestClient(app, raise_server_exceptions=True) as client:
         yield client
+
+
+@pytest.fixture(autouse=True)
+def no_background_evaluation(monkeypatch):
+    """
+    Suppress the intent handler background task in all integration tests.
+
+    Tests in this suite cover lifecycle, negotiation, and notifications — not
+    evaluation.  The background eval task fires extra SPARQL calls that would
+    interfere with tests whose respx mocks count calls sequentially.
+
+    Tests that specifically want to verify evaluation behaviour should override
+    this fixture with their own mock or remove the monkeypatch.
+    """
+    monkeypatch.setattr(
+        "src.services.intent_service.schedule_evaluation",
+        lambda *_args, **_kwargs: None,
+    )

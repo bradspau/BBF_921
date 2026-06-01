@@ -18,9 +18,11 @@ from typing import Any
 from fastapi import HTTPException
 
 from src.graph.repositories.intent_repository import IntentRepository
+from src.graph.repositories.intent_report_repository import IntentReportRepository
 from src.graph.repositories.hub_repository import HubRepository
 from src.services.state_machine import validate_transition
 from src.services.notification_service import EventType, NotificationService
+from src.handler.dispatcher import schedule_evaluation
 
 _BASE_HREF = "http://tmforum.org/tmf-api/intentManagement/v5/intent"
 
@@ -40,8 +42,11 @@ class IntentService:
         self,
         intent_repo: IntentRepository,
         hub_repo: HubRepository,
+        report_repo: IntentReportRepository | None = None,
     ) -> None:
         self._repo = intent_repo
+        self._hub_repo = hub_repo
+        self._report_repo = report_repo
         self._notifications = NotificationService(hub_repo)
 
     # ── Create ────────────────────────────────────────────────────────────────
@@ -71,6 +76,8 @@ class IntentService:
 
         result = await self._repo.create(payload)
         self._notifications.schedule(EventType.INTENT_CREATE, result)
+        if self._report_repo is not None:
+            schedule_evaluation(intent_id, self._repo._client, self._report_repo, self._hub_repo)
         return result
 
     # ── Read ──────────────────────────────────────────────────────────────────
@@ -139,6 +146,9 @@ class IntentService:
             self._notifications.schedule(EventType.INTENT_STATUS_CHANGE, updated)
         else:
             self._notifications.schedule(EventType.INTENT_ATTRIBUTE_VALUE_CHANGE, updated)
+
+        if self._report_repo is not None:
+            schedule_evaluation(intent_id, self._repo._client, self._report_repo, self._hub_repo)
 
         return updated
 

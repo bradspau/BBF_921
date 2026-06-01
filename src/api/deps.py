@@ -15,7 +15,11 @@ from src.services.intent_spec_service import IntentSpecService
 
 def get_intent_service() -> IntentService:
     client = get_client()
-    return IntentService(IntentRepository(client), HubRepository(client))
+    return IntentService(
+        IntentRepository(client),
+        HubRepository(client),
+        IntentReportRepository(client),
+    )
 
 
 def get_intent_report_service() -> IntentReportService:

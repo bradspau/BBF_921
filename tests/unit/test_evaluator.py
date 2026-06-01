@@ -52,7 +52,7 @@ def _state_row(state: str = "Active") -> dict:
     return {
         "state": {
             "type": "uri",
-            "value": f"http://tio.models.tmforum.org/tio/v3.6.0/IntentManagmentOntology#{state}",
+            "value": f"http://tio.models.tmforum.org/tio/v3.6.0/IntentManagementOntology/{state}",
         }
     }
 
@@ -98,7 +98,7 @@ class TestEvaluateIntentNoExpression:
 class TestEvaluateIntentTurtleExpression:
     @respx.mock
     async def test_state_found_returns_correct_state(self):
-        turtle = "@prefix imo: <http://tio.models.tmforum.org/tio/v3.6.0/IntentManagmentOntology#> ."
+        turtle = "@prefix imo: <http://tio.models.tmforum.org/tio/v3.6.0/IntentManagementOntology/> ."
         # Call 1: intent graph query → turtle expression row
         # Call 2: state query → state row
         call_count = 0
@@ -211,7 +211,7 @@ class TestEvaluateIntentTurtleExpression:
 
     @respx.mock
     async def test_state_uri_fragment_parsed_correctly(self):
-        """States with # fragments are trimmed to the local name."""
+        """State URIs using a # fragment (legacy namespace form) are trimmed to the local name."""
         turtle = "@prefix : <http://example.org/> ."
         call_count = 0
 
@@ -220,7 +220,13 @@ class TestEvaluateIntentTurtleExpression:
             call_count += 1
             if call_count == 1:
                 return httpx.Response(200, json=_sparql_bindings(_turtle_expr_row(turtle)))
-            return httpx.Response(200, json=_sparql_bindings(_state_row("Fulfilled")))
+            # Simulate a Fuseki response carrying a # fragment URI (old tio-rules.dlog style)
+            return httpx.Response(200, json=_sparql_bindings({
+                "state": {
+                    "type": "uri",
+                    "value": "http://tio.models.tmforum.org/tio/v3.6.0/IntentManagmentOntology#Fulfilled",
+                }
+            }))
 
         respx.post(f"{FUSEKI}/{DATASET}/sparql").mock(side_effect=sparql_side_effect)
         respx.post(f"{FUSEKI}/{DATASET}/data").mock(return_value=httpx.Response(200))
