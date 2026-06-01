@@ -1,0 +1,15 @@
+# TMF921 Intent Management API — Dev/Test Dependencies
+-r requirements.txt
+
+# Testing
+pytest==8.3.5
+pytest-cov==6.1.0
+pytest-asyncio==0.26.0
+respx==0.22.0
+schemathesis==3.39.12
+
+# Code generation
+datamodel-code-generator==0.27.5
+
+# Quality
+ruff==0.11.9

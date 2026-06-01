@@ -1,0 +1,17 @@
+# TMF921 Intent Management API — Runtime Dependencies
+# Graph store: Apache Jena Fuseki via SPARQL 1.1 HTTP
+
+# API framework
+fastapi==0.115.12
+uvicorn[standard]==0.34.2
+
+# Data models
+pydantic==2.11.4
+pydantic-settings==2.9.1
+python-multipart==0.0.20
+
+# HTTP client (SPARQL/GSP to Fuseki + outbound notifications)
+httpx==0.28.1
+
+# Namespace/Literal/URIRef helpers (no embedded RDF store)
+rdflib==7.1.4
