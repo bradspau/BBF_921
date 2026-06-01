@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import json
 import sys
 
 import httpx
@@ -28,11 +27,12 @@ INTENTS: list[dict] = [
         "context": "5G-Core",
         "expression": {
             "@type": "JsonLdExpression",
-            "expressionValue": json.dumps({
+            "iri": "https://tmforum.org/tio/v3.2.1/AvailabilityIntent",
+            "expressionValue": {
                 "@context": "https://tmforum.org/intent/v5",
                 "availability": "99.99%",
                 "measurementInterval": "PT5M",
-            }),
+            },
         },
     },
     {
@@ -45,6 +45,7 @@ INTENTS: list[dict] = [
         "context": "EdgeCompute",
         "expression": {
             "@type": "TurtleExpression",
+            "iri": "https://tmforum.org/tio/v3.2.1/LatencyExpectation",
             "expressionValue": (
                 "@prefix tio: <https://tmforum.org/tio/v3.2.1/> .\n"
                 "[] a tio:DeliveryExpectation ;\n"
@@ -63,11 +64,12 @@ INTENTS: list[dict] = [
         "context": "Backbone",
         "expression": {
             "@type": "JsonLdExpression",
-            "expressionValue": json.dumps({
+            "iri": "https://tmforum.org/tio/v3.2.1/BandwidthProbe",
+            "expressionValue": {
                 "@context": "https://tmforum.org/intent/v5",
                 "probe": "bandwidth",
                 "link": "B2",
-            }),
+            },
         },
     },
     {
@@ -80,11 +82,12 @@ INTENTS: list[dict] = [
         "context": "SecurityZone-C",
         "expression": {
             "@type": "JsonLdExpression",
-            "expressionValue": json.dumps({
+            "iri": "https://tmforum.org/tio/v3.2.1/SecurityCompliance",
+            "expressionValue": {
                 "@context": "https://tmforum.org/intent/v5",
                 "tlsVersion": "1.3",
                 "zone": "C",
-            }),
+            },
         },
     },
 ]
@@ -94,7 +97,7 @@ INTENT_SPEC: dict = {
     "@baseType": "IntentSpecification",
     "name": "Network Slice Availability Spec v1",
     "description": "Specification for availability-based network slice intents.",
-    "lifecycleStatus": "Active",
+    "lifecycleStatus": "ACTIVE",
     "version": "1.0.0",
 }
 
