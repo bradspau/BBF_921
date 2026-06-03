@@ -270,6 +270,121 @@ class TestEvaluateTurtleConditions:
         assert "parse error" in result["reason"].lower()
         assert result["conditions"] == []
 
+    # ── error paths: missing structure / bad literals ─────────────────────────
+
+    def test_two_arg_missing_operand_nodes_degraded(self):
+        """quanatLeast with no rdf:rest → missing operand nodes error."""
+        turtle = (
+            "@prefix quan: <http://tio.models.tmforum.org/tio/v3.6.0/QuantityOntology/> .\n"
+            "@prefix rdf:  <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .\n"
+            "@prefix xsd:  <http://www.w3.org/2001/XMLSchema#> .\n"
+            "<urn:t:cmp> a quan:quanatLeast ;\n"
+            "    rdf:first <urn:t:obs> .\n"  # no rdf:rest → bnd_node will be None
+            '<urn:t:obs> rdf:value "120"^^xsd:decimal .\n'
+        )
+        result = evaluate_turtle_conditions(turtle)
+        assert result["intentHandlingState"] == "Degraded"
+        c = result["conditions"][0]
+        assert c["passed"] is False
+        assert c["error"] == "missing operand nodes"
+        assert "missing operand nodes" in result["reason"]
+
+    def test_two_arg_missing_rdf_value_degraded(self):
+        """quanatLeast nodes present but rdf:value absent on observed node."""
+        turtle = (
+            "@prefix quan: <http://tio.models.tmforum.org/tio/v3.6.0/QuantityOntology/> .\n"
+            "@prefix rdf:  <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .\n"
+            "@prefix xsd:  <http://www.w3.org/2001/XMLSchema#> .\n"
+            "<urn:t:cmp> a quan:quanatLeast ;\n"
+            "    rdf:first <urn:t:obs> ;\n"
+            "    rdf:rest  <urn:t:rst> .\n"
+            "<urn:t:rst> rdf:first <urn:t:bnd> .\n"
+            # obs has no rdf:value
+            '<urn:t:bnd> rdf:value "100"^^xsd:decimal .\n'
+        )
+        result = evaluate_turtle_conditions(turtle)
+        assert result["intentHandlingState"] == "Degraded"
+        c = result["conditions"][0]
+        assert c["passed"] is False
+        assert c["error"] == "missing rdf:value"
+
+    def test_two_arg_non_numeric_value_degraded(self):
+        """quanatLeast with a non-numeric literal → InvalidOperation error."""
+        turtle = (
+            "@prefix quan: <http://tio.models.tmforum.org/tio/v3.6.0/QuantityOntology/> .\n"
+            "@prefix rdf:  <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .\n"
+            "@prefix xsd:  <http://www.w3.org/2001/XMLSchema#> .\n"
+            "<urn:t:cmp> a quan:quanatLeast ;\n"
+            "    rdf:first <urn:t:obs> ;\n"
+            "    rdf:rest  <urn:t:rst> .\n"
+            "<urn:t:rst> rdf:first <urn:t:bnd> .\n"
+            '<urn:t:obs> rdf:value "not-a-number"^^xsd:string .\n'
+            '<urn:t:bnd> rdf:value "100"^^xsd:decimal .\n'
+        )
+        result = evaluate_turtle_conditions(turtle)
+        assert result["intentHandlingState"] == "Degraded"
+        c = result["conditions"][0]
+        assert c["passed"] is False
+        assert c["error"] == "non-numeric value"
+
+    def test_quaninRange_missing_operand_nodes_degraded(self):
+        """quaninRange with no rdf:rest chain → missing operand nodes error."""
+        turtle = (
+            "@prefix quan: <http://tio.models.tmforum.org/tio/v3.6.0/QuantityOntology/> .\n"
+            "@prefix rdf:  <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .\n"
+            "@prefix xsd:  <http://www.w3.org/2001/XMLSchema#> .\n"
+            "<urn:t:cmp> a quan:quaninRange ;\n"
+            "    rdf:first <urn:t:val> .\n"  # no rdf:rest → lo_node/hi_node None
+            '<urn:t:val> rdf:value "50"^^xsd:decimal .\n'
+        )
+        result = evaluate_turtle_conditions(turtle)
+        assert result["intentHandlingState"] == "Degraded"
+        c = result["conditions"][0]
+        assert c["passed"] is False
+        assert c["error"] == "missing operand nodes"
+
+    def test_quaninRange_missing_rdf_value_degraded(self):
+        """quaninRange with correct structure but rdf:value absent on lower bound."""
+        turtle = (
+            "@prefix quan: <http://tio.models.tmforum.org/tio/v3.6.0/QuantityOntology/> .\n"
+            "@prefix rdf:  <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .\n"
+            "@prefix xsd:  <http://www.w3.org/2001/XMLSchema#> .\n"
+            "<urn:t:cmp> a quan:quaninRange ;\n"
+            "    rdf:first <urn:t:val> ;\n"
+            "    rdf:rest  <urn:t:r1> .\n"
+            "<urn:t:r1> rdf:first <urn:t:lo> ; rdf:rest <urn:t:r2> .\n"
+            "<urn:t:r2> rdf:first <urn:t:hi> .\n"
+            '<urn:t:val> rdf:value "50"^^xsd:decimal .\n'
+            # lo has no rdf:value
+            '<urn:t:hi>  rdf:value "100"^^xsd:decimal .\n'
+        )
+        result = evaluate_turtle_conditions(turtle)
+        assert result["intentHandlingState"] == "Degraded"
+        c = result["conditions"][0]
+        assert c["passed"] is False
+        assert c["error"] == "missing rdf:value"
+
+    def test_quaninRange_non_numeric_value_degraded(self):
+        """quaninRange with non-numeric literal on upper bound."""
+        turtle = (
+            "@prefix quan: <http://tio.models.tmforum.org/tio/v3.6.0/QuantityOntology/> .\n"
+            "@prefix rdf:  <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .\n"
+            "@prefix xsd:  <http://www.w3.org/2001/XMLSchema#> .\n"
+            "<urn:t:cmp> a quan:quaninRange ;\n"
+            "    rdf:first <urn:t:val> ;\n"
+            "    rdf:rest  <urn:t:r1> .\n"
+            "<urn:t:r1> rdf:first <urn:t:lo> ; rdf:rest <urn:t:r2> .\n"
+            "<urn:t:r2> rdf:first <urn:t:hi> .\n"
+            '<urn:t:val> rdf:value "50"^^xsd:decimal .\n'
+            '<urn:t:lo>  rdf:value "10"^^xsd:decimal .\n'
+            '<urn:t:hi>  rdf:value "not-a-number"^^xsd:string .\n'
+        )
+        result = evaluate_turtle_conditions(turtle)
+        assert result["intentHandlingState"] == "Degraded"
+        c = result["conditions"][0]
+        assert c["passed"] is False
+        assert c["error"] == "non-numeric value"
+
     # ── per-condition detail ──────────────────────────────────────────────────
 
     def test_conditions_list_present_on_fulfilled(self):

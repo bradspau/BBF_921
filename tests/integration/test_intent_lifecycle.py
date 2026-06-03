@@ -205,6 +205,36 @@ class TestListIntents:
         assert resp.status_code == 200
         assert resp.json() == []
 
+    @respx.mock
+    def test_list_filter_by_lifecycleStatus(self, tc):
+        row = intent_row(INTENT_ID, lifecycle_status="ACTIVE")
+        respx.post(SPARQL).mock(
+            side_effect=sequential(
+                httpx.Response(200, json=sparql_bindings(count_row(1))),
+                httpx.Response(200, json=sparql_bindings(row)),
+            )
+        )
+
+        resp = tc.get(f"{BASE}/intent?lifecycleStatus=ACTIVE")
+
+        assert resp.status_code == 200
+        assert resp.json()[0]["lifecycleStatus"] == "ACTIVE"
+
+    @respx.mock
+    def test_list_filter_by_name(self, tc):
+        row = intent_row(INTENT_ID, name="HSI Intent")
+        respx.post(SPARQL).mock(
+            side_effect=sequential(
+                httpx.Response(200, json=sparql_bindings(count_row(1))),
+                httpx.Response(200, json=sparql_bindings(row)),
+            )
+        )
+
+        resp = tc.get(f"{BASE}/intent?name=HSI+Intent")
+
+        assert resp.status_code == 200
+        assert resp.json()[0]["name"] == "HSI Intent"
+
 
 class TestPatchIntent:
     @respx.mock
@@ -378,3 +408,37 @@ class TestFullLifecycle:
         # DELETE
         r4 = tc.delete(f"{BASE}/intent/{INTENT_ID}")
         assert r4.status_code == 204
+
+
+class TestListIntentSpecs:
+    @respx.mock
+    def test_list_specs_filter_by_lifecycleStatus(self, tc):
+        from tests.integration.conftest import spec_row
+        row = spec_row(INTENT_ID, name="My Spec")
+        respx.post(SPARQL).mock(
+            side_effect=sequential(
+                httpx.Response(200, json=sparql_bindings(count_row(1))),
+                httpx.Response(200, json=sparql_bindings(row)),
+            )
+        )
+
+        resp = tc.get(f"{BASE}/intentSpecification?lifecycleStatus=ACTIVE")
+
+        assert resp.status_code == 200
+        assert isinstance(resp.json(), list)
+
+    @respx.mock
+    def test_list_specs_filter_by_name(self, tc):
+        from tests.integration.conftest import spec_row
+        row = spec_row(INTENT_ID, name="HSI Spec")
+        respx.post(SPARQL).mock(
+            side_effect=sequential(
+                httpx.Response(200, json=sparql_bindings(count_row(1))),
+                httpx.Response(200, json=sparql_bindings(row)),
+            )
+        )
+
+        resp = tc.get(f"{BASE}/intentSpecification?name=HSI+Spec")
+
+        assert resp.status_code == 200
+        assert resp.json()[0]["name"] == "HSI Spec"
