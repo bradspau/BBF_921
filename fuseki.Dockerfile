@@ -16,5 +16,5 @@ VOLUME /fuseki/databases
 
 EXPOSE 3030
 
-ENTRYPOINT ["/usr/bin/tini", "--", "./fuseki-server"]
-CMD ["--update", "--tdb2", "--loc", "/fuseki/databases/tmf921", "/tmf921"]
+ENTRYPOINT ["/usr/bin/tini", "--"]
+CMD ["/bin/sh", "-c", "mkdir -p /fuseki/databases/tmf921 && exec ./fuseki-server --update --tdb2 --loc /fuseki/databases/tmf921 /tmf921"]
