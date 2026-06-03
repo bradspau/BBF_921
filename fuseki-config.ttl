@@ -1,10 +1,16 @@
 @prefix fuseki:  <http://jena.apache.org/fuseki#> .
 @prefix rdf:     <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs:    <http://www.w3.org/2000/01/rdf-schema#> .
 @prefix tdb2:    <http://jena.apache.org/2016/tdb2#> .
 @prefix ja:      <http://jena.hpl.hp.com/2005/11/Assembler#> .
 
+# Force TDB2 assembler registration — in Fuseki 6.x the static init that
+# registers tdb2:DatasetTDB2 as a ja:Object subclass is not always triggered
+# automatically when loading a config file.
+[] ja:loadClass "org.apache.jena.tdb2.TDB2" .
+tdb2:DatasetTDB2  rdfs:subClassOf  ja:Object .
+
 # ── Main API dataset: TDB2, no inference ─────────────────────────────────────
-# All API resources live in per-resource named graphs here.
 
 <#mainService> rdf:type fuseki:Service ;
     fuseki:name "tmf921" ;
@@ -17,9 +23,6 @@
     tdb2:location "/fuseki/databases/tmf921" .
 
 # ── Eval dataset: in-memory default model with TIO rule inference ─────────────
-# The evaluator writes an expression's Turtle to the default graph, queries
-# for derived intentHandlingState, then clears. One evaluation at a time
-# (semaphore in evaluator.py).
 
 <#evalService> rdf:type fuseki:Service ;
     fuseki:name "tmf921-eval" ;
