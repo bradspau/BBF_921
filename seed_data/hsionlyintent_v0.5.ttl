@@ -1,12 +1,12 @@
 @prefix bbf:  <http://broadband-forum.org/Intent#> .
 @prefix rdf:  <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
 @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
-@prefix icm:  <https://tio.models.tmforum.org/IntentCommonModel/> .
-@prefix imo:  <https://tio.models.tmforum.org/IntentManagementModel/> .
-@prefix log:  <https://tio.models.tmforum.org/LogicalOperatorsModel/> .
-@prefix set:  <https://tio.models.tmforum.org/SetOperatorsModel/> .
+@prefix icm:  <http://tio.models.tmforum.org/tio/v3.6.0/IntentCommonModel/> .
+@prefix imo:  <http://tio.models.tmforum.org/tio/v3.6.0/IntentManagementOntology/> .
+@prefix log:  <http://tio.models.tmforum.org/tio/v3.6.0/LogicalOperators/> .
+@prefix set:  <http://tio.models.tmforum.org/tio/v3.6.0/SetOperators/> .
 @prefix quan: <http://tio.models.tmforum.org/tio/v3.6.0/QuantityOntology/> .
-@prefix t:    <https://www.w3.org/2006/time#> .
+@prefix t:    <http://www.w3.org/2006/time#> .
 @prefix xsd:  <http://www.w3.org/2001/XMLSchema#> .
 
 ############################################################
