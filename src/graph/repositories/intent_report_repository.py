@@ -13,7 +13,8 @@ from src.graph.repositories.base_repository import PREFIXES, BaseRepository
 
 _GET_SELECT = """\
     ?id ?href ?name ?type ?baseType ?schemaLocation
-    ?created ?exprType ?exprIri ?exprValue ?parentIntent"""
+    ?created ?exprType ?exprIri ?exprValue ?parentIntent
+    ?intentHandlingState ?intentHandlingReason"""
 
 _GET_WHERE = """\
         <{uri}> rdf:type tmf:IntentReport .
@@ -25,6 +26,8 @@ _GET_WHERE = """\
         OPTIONAL {{ <{uri}> tmf:schemaLocation ?schemaLocation }}
         OPTIONAL {{ <{uri}> dcterms:created ?created }}
         OPTIONAL {{ <{uri}> tmf:parentIntent ?parentIntent }}
+        OPTIONAL {{ <{uri}> tmf:intentHandlingState ?intentHandlingState }}
+        OPTIONAL {{ <{uri}> tmf:intentHandlingReason ?intentHandlingReason }}
         OPTIONAL {{
             <{uri}> tmf:hasExpression ?exprUri .
             ?exprUri rdf:type ?exprType .
@@ -52,6 +55,8 @@ class IntentReportRepository(BaseRepository):
             "name": self._v(row, "name"),
             "creationDate": self._v(row, "created"),
             "intentId": self._local(parent) if parent else None,
+            "intentHandlingState": self._v(row, "intentHandlingState"),
+            "intentHandlingReason": self._v(row, "intentHandlingReason"),
             "expression": {
                 "@type": e_type,
                 "iri": self._v(row, "exprIri"),
@@ -83,6 +88,10 @@ class IntentReportRepository(BaseRepository):
         ]
         if data.get("@baseType"):
             lines.append(f"        <{report_uri}> tmf:baseType \"{e(data['@baseType'])}\" .")
+        if data.get("intentHandlingState") is not None:
+            lines.append(f"        <{report_uri}> tmf:intentHandlingState \"{e(data['intentHandlingState'])}\" .")
+        if data.get("intentHandlingReason") is not None:
+            lines.append(f"        <{report_uri}> tmf:intentHandlingReason \"{e(data['intentHandlingReason'])}\" .")
 
         expr = data.get("expression")
         if expr:
@@ -176,6 +185,8 @@ class IntentReportRepository(BaseRepository):
             f"        OPTIONAL {{ ?reportUri tmf:schemaLocation ?schemaLocation }}\n"
             f"        OPTIONAL {{ ?reportUri dcterms:created ?created }}\n"
             f"        OPTIONAL {{ ?reportUri tmf:parentIntent ?parentIntent }}\n"
+            f"        OPTIONAL {{ ?reportUri tmf:intentHandlingState ?intentHandlingState }}\n"
+            f"        OPTIONAL {{ ?reportUri tmf:intentHandlingReason ?intentHandlingReason }}\n"
             f"        OPTIONAL {{\n"
             f"            ?reportUri tmf:hasExpression ?exprUri .\n"
             f"            ?exprUri rdf:type ?exprType .\n"
