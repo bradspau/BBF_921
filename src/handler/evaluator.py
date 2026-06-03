@@ -3,28 +3,38 @@ Intent Handler evaluator.
 
 Flow:
   1. Query the intent's named graph for expressionValue and expression type.
-  2. Load expressionValue as Turtle into a temporary evaluation named graph.
-  3. Query the evaluation graph for intentHandlingState.
-  4. Drop the evaluation graph.
-  5. Return a dict with intentHandlingState and an optional reason.
+  2. Acquire the eval semaphore (one evaluation at a time against the shared
+     in-memory inference dataset).
+  3. Clear the eval dataset default graph.
+  4. Load expressionValue Turtle into the eval dataset default graph.
+  5. Query the eval dataset for rule-derived intentHandlingState.
+  6. Clear the eval dataset default graph.
+  7. Release semaphore and return result.
 
-Only TurtleExpression content is loaded for evaluation.  JsonLdExpression
-content is stored opaquely by the API layer and is not materialised here;
-if no Turtle is available the handler defaults to Degraded.
+Only TurtleExpression content is evaluated. JsonLdExpression is stored
+opaquely; if no Turtle is present the handler defaults to Degraded.
+
+The eval dataset (tmf921-eval) is configured in fuseki-config.ttl with a
+ja:GenericRuleReasoner loaded from ontology/jena-rules/tio_all.rules.  Rules
+run inside Jena (Java) against the in-memory default graph.
 """
 from __future__ import annotations
 
+import asyncio
 import logging
-import uuid
 
-from src.graph.namespaces import ONTOLOGY_GRAPH
-from src.graph.nodes import eval_graph_uri, intent_graph_uri, intent_node
+from src.graph.nodes import intent_graph_uri, intent_node
 from src.graph.repositories.base_repository import PREFIXES
 from src.graph.store import FusekiClient
 
 logger = logging.getLogger(__name__)
 
-# Correct TIO v3.6.0 namespace URIs (slash separator, no typo)
+_EVAL_DATASET = "tmf921-eval"
+
+# One evaluation at a time: the eval dataset's default graph is shared and
+# in-memory; concurrent writes would corrupt each other's triples.
+_eval_semaphore = asyncio.Semaphore(1)
+
 _ICM = "http://tio.models.tmforum.org/tio/v3.6.0/IntentCommonModel/"
 _IMO = "http://tio.models.tmforum.org/tio/v3.6.0/IntentManagementOntology/"
 
@@ -40,25 +50,19 @@ WHERE {{
 }}
 """
 
-# Query the eval graph for a handling state, validated against the ontology graph.
-# icm:intentHandlingState — canonical property from IntentCommonModel.ttl
-# imo:handlingState       — alternative assignment property from IntentManagementOntology.ttl
-# The GRAPH <ontology_graph> clause ensures the state value is a known
-# imo:IntentHandlingState individual, making the ontology an active participant.
-_STATE_QUERY = """\
+# Query the eval dataset default graph.  The TIO GenericRuleReasoner derives
+# imo:intentHandlingState from the expression triples; no explicit assertion needed.
+_STATE_QUERY = f"""\
 PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
-PREFIX icm: <{icm}>
-PREFIX imo: <{imo}>
+PREFIX icm: <{_ICM}>
+PREFIX imo: <{_IMO}>
 SELECT ?state
 WHERE {{
-    GRAPH <{eval_graph}> {{
-        {{ ?s icm:intentHandlingState ?state }}
-        UNION
-        {{ ?s imo:handlingState ?state }}
-    }}
-    GRAPH <{ontology_graph}> {{
-        ?state rdf:type imo:IntentHandlingState .
-    }}
+    {{ ?s icm:intentHandlingState ?state }}
+    UNION
+    {{ ?s imo:intentHandlingState ?state }}
+    UNION
+    {{ ?s imo:imohandlingState ?state }}
 }}
 LIMIT 1
 """
@@ -66,21 +70,16 @@ LIMIT 1
 
 async def evaluate_intent(intent_id: str, client: FusekiClient) -> dict:
     """
-    Evaluate an intent and return its inferred intentHandlingState.
+    Evaluate an intent and return its rule-derived intentHandlingState.
 
     Returns a dict: {"intentHandlingState": str, "reason": str | None}
     """
     graph_uri = str(intent_graph_uri(intent_id))
     node_uri = str(intent_node(intent_id))
-    eval_graph = str(eval_graph_uri(intent_id, str(uuid.uuid4())))
 
-    # Step 1 — fetch expressionType and expressionValue from the intent graph
+    # Step 1 — fetch expression type and value from the intent's named graph
     rows = await client.query(
-        _INTENT_QUERY.format(
-            prefixes=PREFIXES,
-            graph=graph_uri,
-            uri=node_uri,
-        )
+        _INTENT_QUERY.format(prefixes=PREFIXES, graph=graph_uri, uri=node_uri)
     )
 
     if not rows:
@@ -95,7 +94,7 @@ async def evaluate_intent(intent_id: str, client: FusekiClient) -> dict:
 
     if expr_type != "TurtleExpression" or not expr_value:
         logger.info(
-            "evaluate_intent: intent %s uses %s — no Turtle to load; defaulting to Degraded",
+            "evaluate_intent: intent %s uses %s — no Turtle; defaulting to Degraded",
             intent_id,
             expr_type,
         )
@@ -104,34 +103,35 @@ async def evaluate_intent(intent_id: str, client: FusekiClient) -> dict:
             "reason": f"No Turtle expression to evaluate (type={expr_type})",
         }
 
-    # Step 2 — load expressionValue Turtle into the evaluation named graph
-    try:
-        await client.gsp_post(eval_graph, expr_value)
-    except Exception as exc:
-        logger.error("evaluate_intent: gsp_post failed for %s: %s", intent_id, exc)
-        return {"intentHandlingState": "Degraded", "reason": f"Expression load failed: {exc}"}
-
-    # Step 3 — query inferred intentHandlingState, validated against ontology graph
-    try:
-        state_rows = await client.query(
-            _STATE_QUERY.format(
-                icm=_ICM,
-                imo=_IMO,
-                eval_graph=eval_graph,
-                ontology_graph=str(ONTOLOGY_GRAPH),
-            )
-        )
-        if state_rows:
-            raw = (state_rows[0].get("state") or {}).get("value", "")
-            state = raw.rsplit("#", 1)[-1].rsplit("/", 1)[-1] or "Degraded"
-            return {"intentHandlingState": state, "reason": None}
-        return {
-            "intentHandlingState": "Degraded",
-            "reason": "No intentHandlingState inferred from expression",
-        }
-    finally:
-        # Step 4 — always drop the evaluation graph
+    # Steps 2-6 — run inference in the shared eval dataset (serialised)
+    async with _eval_semaphore:
+        # Step 3 — clear any leftover triples from a previous evaluation
         try:
-            await client.update(f"DROP SILENT GRAPH <{eval_graph}>")
+            await client.update("CLEAR DEFAULT", dataset=_EVAL_DATASET)
         except Exception as exc:
-            logger.warning("evaluate_intent: failed to drop eval graph %s: %s", eval_graph, exc)
+            logger.warning("evaluate_intent: pre-clear failed for %s: %s", intent_id, exc)
+
+        # Step 4 — load expression Turtle into the eval dataset default graph
+        try:
+            await client.gsp_post(None, expr_value, dataset=_EVAL_DATASET)
+        except Exception as exc:
+            logger.error("evaluate_intent: gsp_post failed for %s: %s", intent_id, exc)
+            return {"intentHandlingState": "Degraded", "reason": f"Expression load failed: {exc}"}
+
+        # Step 5 — query for the rule-derived intentHandlingState
+        try:
+            state_rows = await client.query(_STATE_QUERY, dataset=_EVAL_DATASET)
+            if state_rows:
+                raw = (state_rows[0].get("state") or {}).get("value", "")
+                state = raw.rsplit("#", 1)[-1].rsplit("/", 1)[-1] or "Degraded"
+                return {"intentHandlingState": state, "reason": None}
+            return {
+                "intentHandlingState": "Degraded",
+                "reason": "No intentHandlingState inferred from expression",
+            }
+        finally:
+            # Step 6 — always clear the eval dataset after use
+            try:
+                await client.update("CLEAR DEFAULT", dataset=_EVAL_DATASET)
+            except Exception as exc:
+                logger.warning("evaluate_intent: post-clear failed for %s: %s", intent_id, exc)

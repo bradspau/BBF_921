@@ -54,11 +54,12 @@ class FusekiClient:
 
     # ── SPARQL query ──────────────────────────────────────────────────────────
 
-    async def query(self, sparql: str) -> list[dict]:
+    async def query(self, sparql: str, dataset: str | None = None) -> list[dict]:
         """Execute a SPARQL SELECT; return list of binding dicts."""
         http = self._assert_open()
+        ds = dataset or self._dataset
         resp = await http.post(
-            f"/{self._dataset}/sparql",
+            f"/{ds}/sparql",
             data={"query": sparql},
             headers={"Accept": "application/sparql-results+json"},
         )
@@ -78,11 +79,12 @@ class FusekiClient:
 
     # ── SPARQL update ─────────────────────────────────────────────────────────
 
-    async def update(self, sparql: str) -> None:
+    async def update(self, sparql: str, dataset: str | None = None) -> None:
         """Execute a SPARQL UPDATE (INSERT DATA / DELETE / DROP)."""
         http = self._assert_open()
+        ds = dataset or self._dataset
         resp = await http.post(
-            f"/{self._dataset}/update",
+            f"/{ds}/update",
             data={"update": sparql},
         )
         resp.raise_for_status()
@@ -100,12 +102,19 @@ class FusekiClient:
         )
         resp.raise_for_status()
 
-    async def gsp_post(self, graph_uri: str, turtle: str) -> None:
-        """Merge Turtle triples into a named graph (additive)."""
+    async def gsp_post(
+        self,
+        graph_uri: str | None,
+        turtle: str,
+        dataset: str | None = None,
+    ) -> None:
+        """Merge Turtle triples into a named graph, or the default graph if graph_uri is None."""
         http = self._assert_open()
+        ds = dataset or self._dataset
+        params = {"graph": graph_uri} if graph_uri else {}
         resp = await http.post(
-            f"/{self._dataset}/data",
-            params={"graph": graph_uri},
+            f"/{ds}/data",
+            params=params,
             content=turtle.encode(),
             headers={"Content-Type": "text/turtle"},
         )

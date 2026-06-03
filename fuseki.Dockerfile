@@ -12,9 +12,14 @@ RUN apt-get update && \
 
 WORKDIR /opt/fuseki
 
+# Assembler config and TIO inference rules
+RUN mkdir -p /opt/fuseki/rules
+COPY fuseki-config.ttl /opt/fuseki/run/config.ttl
+COPY ontology/jena-rules/tio_all.rules /opt/fuseki/rules/tio_all.rules
+
 VOLUME /fuseki/databases
 
 EXPOSE 3030
 
 ENTRYPOINT ["/usr/bin/tini", "--"]
-CMD ["/bin/sh", "-c", "mkdir -p /fuseki/databases/tmf921 && exec ./fuseki-server --update --tdb2 --loc /fuseki/databases/tmf921 /tmf921"]
+CMD ["/bin/sh", "-c", "mkdir -p /fuseki/databases/tmf921 && exec ./fuseki-server --config /opt/fuseki/run/config.ttl"]

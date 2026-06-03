@@ -2,6 +2,13 @@
 Unit tests for src/handler/evaluator.py and src/handler/dispatcher.py.
 
 All HTTP calls are intercepted by respx; no live Fuseki required.
+
+Evaluator flow:
+  - Intent expression query  → tmf921/sparql
+  - CLEAR DEFAULT (pre)      → tmf921-eval/update
+  - GSP POST Turtle          → tmf921-eval/data  (no graph= param)
+  - State query              → tmf921-eval/sparql
+  - CLEAR DEFAULT (post)     → tmf921-eval/update
 """
 from __future__ import annotations
 
@@ -16,11 +23,11 @@ from src.graph.store import FusekiClient
 from src.handler.evaluator import evaluate_intent
 from src.handler.dispatcher import dispatch_evaluation, schedule_evaluation
 
-FUSEKI = "http://localhost:3030"
-DATASET = "tmf921"
+FUSEKI   = "http://localhost:3030"
+DATASET  = "tmf921"
+EVAL_DS  = "tmf921-eval"
 INTENT_ID = "intent-aaa"
 
-_EVAL_GRAPH = f"http://tmforum.org/api/v5/eval/{INTENT_ID}"
 _INTENT_GRAPH = f"http://tmforum.org/api/v5/intents/{INTENT_ID}"
 
 
@@ -57,7 +64,7 @@ def _state_row(state: str = "Active") -> dict:
     }
 
 
-# ── evaluate_intent ────────────────────────────────────────────────────────────
+# ── evaluate_intent — no expression / wrong type ──────────────────────────────
 
 
 class TestEvaluateIntentNoExpression:
@@ -74,9 +81,7 @@ class TestEvaluateIntentNoExpression:
     @respx.mock
     async def test_json_ld_expression_returns_degraded(self):
         respx.post(f"{FUSEKI}/{DATASET}/sparql").mock(
-            return_value=httpx.Response(
-                200, json=_sparql_bindings(_json_ld_expr_row())
-            )
+            return_value=httpx.Response(200, json=_sparql_bindings(_json_ld_expr_row()))
         )
         async with FusekiClient(FUSEKI, DATASET) as client:
             result = await evaluate_intent(INTENT_ID, client)
@@ -86,7 +91,7 @@ class TestEvaluateIntentNoExpression:
     @respx.mock
     async def test_turtle_expr_with_empty_value_returns_degraded(self):
         row = _turtle_expr_row("")
-        del row["exprValue"]  # simulate missing binding
+        del row["exprValue"]
         respx.post(f"{FUSEKI}/{DATASET}/sparql").mock(
             return_value=httpx.Response(200, json=_sparql_bindings(row))
         )
@@ -95,24 +100,21 @@ class TestEvaluateIntentNoExpression:
         assert result["intentHandlingState"] == "Degraded"
 
 
+# ── evaluate_intent — Turtle expression with eval dataset ─────────────────────
+
+
 class TestEvaluateIntentTurtleExpression:
     @respx.mock
     async def test_state_found_returns_correct_state(self):
         turtle = "@prefix imo: <http://tio.models.tmforum.org/tio/v3.6.0/IntentManagementOntology/> ."
-        # Call 1: intent graph query → turtle expression row
-        # Call 2: state query → state row
-        call_count = 0
-
-        def sparql_side_effect(request, **_):
-            nonlocal call_count
-            call_count += 1
-            if call_count == 1:
-                return httpx.Response(200, json=_sparql_bindings(_turtle_expr_row(turtle)))
-            return httpx.Response(200, json=_sparql_bindings(_state_row("Active")))
-
-        respx.post(f"{FUSEKI}/{DATASET}/sparql").mock(side_effect=sparql_side_effect)
-        respx.post(f"{FUSEKI}/{DATASET}/data").mock(return_value=httpx.Response(200))
-        respx.post(f"{FUSEKI}/{DATASET}/update").mock(return_value=httpx.Response(200))
+        respx.post(f"{FUSEKI}/{DATASET}/sparql").mock(
+            return_value=httpx.Response(200, json=_sparql_bindings(_turtle_expr_row(turtle)))
+        )
+        respx.post(f"{FUSEKI}/{EVAL_DS}/update").mock(return_value=httpx.Response(200))
+        respx.post(f"{FUSEKI}/{EVAL_DS}/data").mock(return_value=httpx.Response(200))
+        respx.post(f"{FUSEKI}/{EVAL_DS}/sparql").mock(
+            return_value=httpx.Response(200, json=_sparql_bindings(_state_row("Active")))
+        )
 
         async with FusekiClient(FUSEKI, DATASET) as client:
             result = await evaluate_intent(INTENT_ID, client)
@@ -123,18 +125,14 @@ class TestEvaluateIntentTurtleExpression:
     @respx.mock
     async def test_no_state_inferred_returns_degraded(self):
         turtle = "@prefix : <http://example.org/> ."
-        call_count = 0
-
-        def sparql_side_effect(request, **_):
-            nonlocal call_count
-            call_count += 1
-            if call_count == 1:
-                return httpx.Response(200, json=_sparql_bindings(_turtle_expr_row(turtle)))
-            return httpx.Response(200, json=_sparql_bindings())  # no state
-
-        respx.post(f"{FUSEKI}/{DATASET}/sparql").mock(side_effect=sparql_side_effect)
-        respx.post(f"{FUSEKI}/{DATASET}/data").mock(return_value=httpx.Response(200))
-        respx.post(f"{FUSEKI}/{DATASET}/update").mock(return_value=httpx.Response(200))
+        respx.post(f"{FUSEKI}/{DATASET}/sparql").mock(
+            return_value=httpx.Response(200, json=_sparql_bindings(_turtle_expr_row(turtle)))
+        )
+        respx.post(f"{FUSEKI}/{EVAL_DS}/update").mock(return_value=httpx.Response(200))
+        respx.post(f"{FUSEKI}/{EVAL_DS}/data").mock(return_value=httpx.Response(200))
+        respx.post(f"{FUSEKI}/{EVAL_DS}/sparql").mock(
+            return_value=httpx.Response(200, json=_sparql_bindings())
+        )
 
         async with FusekiClient(FUSEKI, DATASET) as client:
             result = await evaluate_intent(INTENT_ID, client)
@@ -143,12 +141,13 @@ class TestEvaluateIntentTurtleExpression:
         assert "No intentHandlingState" in (result.get("reason") or "")
 
     @respx.mock
-    async def test_gsp_post_failure_returns_degraded_and_no_drop(self):
+    async def test_gsp_post_failure_returns_degraded(self):
         turtle = "@prefix : <http://example.org/> ."
         respx.post(f"{FUSEKI}/{DATASET}/sparql").mock(
             return_value=httpx.Response(200, json=_sparql_bindings(_turtle_expr_row(turtle)))
         )
-        respx.post(f"{FUSEKI}/{DATASET}/data").mock(
+        respx.post(f"{FUSEKI}/{EVAL_DS}/update").mock(return_value=httpx.Response(200))
+        respx.post(f"{FUSEKI}/{EVAL_DS}/data").mock(
             return_value=httpx.Response(500, text="Internal Server Error")
         )
 
@@ -159,78 +158,65 @@ class TestEvaluateIntentTurtleExpression:
         assert "failed" in (result.get("reason") or "").lower()
 
     @respx.mock
-    async def test_eval_graph_always_dropped(self):
-        """DROP SILENT must be called even when state query succeeds."""
+    async def test_eval_dataset_always_cleared(self):
+        """CLEAR DEFAULT must be called before and after the state query."""
         turtle = "@prefix : <http://example.org/> ."
-        call_count = 0
-
-        def sparql_side_effect(request, **_):
-            nonlocal call_count
-            call_count += 1
-            if call_count == 1:
-                return httpx.Response(200, json=_sparql_bindings(_turtle_expr_row(turtle)))
-            return httpx.Response(200, json=_sparql_bindings(_state_row("Active")))
-
-        respx.post(f"{FUSEKI}/{DATASET}/sparql").mock(side_effect=sparql_side_effect)
-        respx.post(f"{FUSEKI}/{DATASET}/data").mock(return_value=httpx.Response(200))
-        update_route = respx.post(f"{FUSEKI}/{DATASET}/update").mock(
+        respx.post(f"{FUSEKI}/{DATASET}/sparql").mock(
+            return_value=httpx.Response(200, json=_sparql_bindings(_turtle_expr_row(turtle)))
+        )
+        respx.post(f"{FUSEKI}/{EVAL_DS}/data").mock(return_value=httpx.Response(200))
+        respx.post(f"{FUSEKI}/{EVAL_DS}/sparql").mock(
+            return_value=httpx.Response(200, json=_sparql_bindings(_state_row("Active")))
+        )
+        update_route = respx.post(f"{FUSEKI}/{EVAL_DS}/update").mock(
             return_value=httpx.Response(200)
         )
 
         async with FusekiClient(FUSEKI, DATASET) as client:
             await evaluate_intent(INTENT_ID, client)
 
-        assert update_route.called
-        body = update_route.calls[0].request.content.decode()
-        assert "DROP" in body and "SILENT" in body and "GRAPH" in body
+        assert update_route.call_count == 2
+        for call in update_route.calls:
+            body = call.request.content.decode()
+            assert "CLEAR" in body and "DEFAULT" in body
 
     @respx.mock
-    async def test_drop_failure_does_not_raise(self):
-        """A DROP failure must be swallowed and logged, not raised."""
+    async def test_clear_failure_does_not_raise(self):
+        """A CLEAR DEFAULT failure must be swallowed, not raised."""
         turtle = "@prefix : <http://example.org/> ."
-        call_count = 0
-
-        def sparql_side_effect(request, **_):
-            nonlocal call_count
-            call_count += 1
-            if call_count == 1:
-                return httpx.Response(200, json=_sparql_bindings(_turtle_expr_row(turtle)))
-            return httpx.Response(200, json=_sparql_bindings(_state_row("Active")))
-
-        respx.post(f"{FUSEKI}/{DATASET}/sparql").mock(side_effect=sparql_side_effect)
-        respx.post(f"{FUSEKI}/{DATASET}/data").mock(return_value=httpx.Response(200))
-        respx.post(f"{FUSEKI}/{DATASET}/update").mock(
+        respx.post(f"{FUSEKI}/{DATASET}/sparql").mock(
+            return_value=httpx.Response(200, json=_sparql_bindings(_turtle_expr_row(turtle)))
+        )
+        respx.post(f"{FUSEKI}/{EVAL_DS}/data").mock(return_value=httpx.Response(200))
+        respx.post(f"{FUSEKI}/{EVAL_DS}/sparql").mock(
+            return_value=httpx.Response(200, json=_sparql_bindings(_state_row("Active")))
+        )
+        respx.post(f"{FUSEKI}/{EVAL_DS}/update").mock(
             return_value=httpx.Response(500, text="update failed")
         )
 
         async with FusekiClient(FUSEKI, DATASET) as client:
             result = await evaluate_intent(INTENT_ID, client)
 
-        # Result is still valid despite drop failing
         assert result["intentHandlingState"] == "Active"
 
     @respx.mock
     async def test_state_uri_fragment_parsed_correctly(self):
-        """State URIs using a # fragment (legacy namespace form) are trimmed to the local name."""
+        """State URIs using a # fragment are trimmed to the local name."""
         turtle = "@prefix : <http://example.org/> ."
-        call_count = 0
-
-        def sparql_side_effect(request, **_):
-            nonlocal call_count
-            call_count += 1
-            if call_count == 1:
-                return httpx.Response(200, json=_sparql_bindings(_turtle_expr_row(turtle)))
-            # Simulate a Fuseki response carrying a # fragment URI (old tio-rules.dlog style)
-            return httpx.Response(200, json=_sparql_bindings({
+        respx.post(f"{FUSEKI}/{DATASET}/sparql").mock(
+            return_value=httpx.Response(200, json=_sparql_bindings(_turtle_expr_row(turtle)))
+        )
+        respx.post(f"{FUSEKI}/{EVAL_DS}/update").mock(return_value=httpx.Response(200))
+        respx.post(f"{FUSEKI}/{EVAL_DS}/data").mock(return_value=httpx.Response(200))
+        respx.post(f"{FUSEKI}/{EVAL_DS}/sparql").mock(
+            return_value=httpx.Response(200, json=_sparql_bindings({
                 "state": {
                     "type": "uri",
                     "value": "http://tio.models.tmforum.org/tio/v3.6.0/IntentManagmentOntology#Fulfilled",
                 }
             }))
-
-        respx.post(f"{FUSEKI}/{DATASET}/sparql").mock(side_effect=sparql_side_effect)
-        respx.post(f"{FUSEKI}/{DATASET}/data").mock(return_value=httpx.Response(200))
-        respx.post(f"{FUSEKI}/{DATASET}/update").mock(return_value=httpx.Response(200))
+        )
 
         async with FusekiClient(FUSEKI, DATASET) as client:
             result = await evaluate_intent(INTENT_ID, client)
@@ -271,7 +257,6 @@ class TestDispatchEvaluation:
             "src.handler.dispatcher.evaluate_intent",
             AsyncMock(side_effect=RuntimeError("boom")),
         ):
-            # must not raise
             await dispatch_evaluation(INTENT_ID, mock_client, mock_report_repo, mock_hub_repo)
 
         mock_report_repo.create.assert_not_called()
@@ -286,7 +271,6 @@ class TestDispatchEvaluation:
             "src.handler.dispatcher.evaluate_intent",
             AsyncMock(return_value={"intentHandlingState": "Degraded", "reason": None}),
         ):
-            # must not raise
             await dispatch_evaluation(INTENT_ID, mock_client, mock_report_repo, mock_hub_repo)
 
     async def test_dispatch_sets_degraded_when_reason_present(self):
@@ -297,12 +281,7 @@ class TestDispatchEvaluation:
 
         with patch(
             "src.handler.dispatcher.evaluate_intent",
-            AsyncMock(
-                return_value={
-                    "intentHandlingState": "Degraded",
-                    "reason": "No Turtle expression",
-                }
-            ),
+            AsyncMock(return_value={"intentHandlingState": "Degraded", "reason": "No Turtle expression"}),
         ):
             await dispatch_evaluation(INTENT_ID, mock_client, mock_report_repo, mock_hub_repo)
 
@@ -317,10 +296,7 @@ class TestScheduleEvaluation:
         mock_report_repo = MagicMock()
         mock_hub_repo = MagicMock()
 
-        with patch(
-            "src.handler.dispatcher.dispatch_evaluation",
-            AsyncMock(return_value=None),
-        ):
+        with patch("src.handler.dispatcher.evaluate_intent", AsyncMock(return_value={})):
             task = schedule_evaluation(INTENT_ID, mock_client, mock_report_repo, mock_hub_repo)
             assert isinstance(task, asyncio.Task)
             await task
@@ -330,10 +306,7 @@ class TestScheduleEvaluation:
         mock_report_repo = MagicMock()
         mock_hub_repo = MagicMock()
 
-        with patch(
-            "src.handler.dispatcher.dispatch_evaluation",
-            AsyncMock(return_value=None),
-        ):
+        with patch("src.handler.dispatcher.evaluate_intent", AsyncMock(return_value={})):
             task = schedule_evaluation(INTENT_ID, mock_client, mock_report_repo, mock_hub_repo)
             assert INTENT_ID in task.get_name()
             await task
