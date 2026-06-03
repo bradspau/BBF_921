@@ -1,6 +1,6 @@
 FROM eclipse-temurin:17-jre-jammy
 
-ARG FUSEKI_VERSION=5.2.0
+ARG FUSEKI_VERSION=6.1.0
 
 RUN apt-get update && \
     apt-get install -y --no-install-recommends curl tini && \
