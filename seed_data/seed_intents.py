@@ -11,10 +11,13 @@ from __future__ import annotations
 import argparse
 import asyncio
 import sys
+from pathlib import Path
 
 import httpx
 
 BASE = "/tmf-api/intentManagement/v5"
+
+_SEED_DIR = Path(__file__).parent
 
 INTENTS: list[dict] = [
     {
@@ -88,6 +91,20 @@ INTENTS: list[dict] = [
                 "tlsVersion": "1.3",
                 "zone": "C",
             },
+        },
+    },
+    {
+        "@type": "Intent",
+        "@baseType": "Intent",
+        "name": "BBF HSI Service Intent v0.5",
+        "description": "Provision HSI service on a UNI with BBF subscriber association — North Region, subscriber BBF_SUB_12345.",
+        "lifecycleStatus": "Acknowledged",
+        "priority": "1",
+        "context": "BBF-NorthRegion",
+        "expression": {
+            "@type": "TurtleExpression",
+            "iri": "http://broadband-forum.org/Intent#HSIIntent",
+            "expressionValue": (_SEED_DIR / "hsionlyintent_v0.5.ttl").read_text(encoding="utf-8"),
         },
     },
 ]
