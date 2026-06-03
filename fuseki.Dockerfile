@@ -1,6 +1,6 @@
-FROM eclipse-temurin:21-jre-jammy
+FROM eclipse-temurin:17-jre-jammy
 
-ARG FUSEKI_VERSION=6.1.0
+ARG FUSEKI_VERSION=5.6.0
 
 RUN apt-get update && \
     apt-get install -y --no-install-recommends curl tini && \
@@ -15,6 +15,7 @@ WORKDIR /opt/fuseki
 # Assembler config and TIO inference rules
 RUN mkdir -p /opt/fuseki/rules
 COPY fuseki-config.ttl /opt/fuseki/run/config.ttl
+COPY shiro.ini /opt/fuseki/run/shiro.ini
 COPY ontology/jena-rules/tio_all.rules /opt/fuseki/rules/tio_all.rules
 
 VOLUME /fuseki/databases

@@ -164,7 +164,7 @@ FastAPI app
 
 ## Postman Collection
 
-Import `postman/TMF921_collection.json` into Postman. Set the `base_url` collection variable to `http://localhost:8000` (default).
+Import `postman/TMF921_collection.json` into Postman. Set the `base_url` collection variable to `http://localhost:8000` (default). Set the api_base to `{{base_url}}/tmf-api/intentManagement/v5`.
 
 ---
 
