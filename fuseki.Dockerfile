@@ -5,9 +5,9 @@ ARG FUSEKI_VERSION=5.2.0
 RUN apt-get update && \
     apt-get install -y --no-install-recommends curl tini && \
     rm -rf /var/lib/apt/lists/* && \
-    curl -fsSL \
-      "https://dlcdn.apache.org/jena/binaries/apache-jena-fuseki-${FUSEKI_VERSION}.tar.gz" \
-      | tar -xz -C /opt && \
+    ( curl -fsSL "https://dlcdn.apache.org/jena/binaries/apache-jena-fuseki-${FUSEKI_VERSION}.tar.gz" \
+      || curl -fsSL "https://archive.apache.org/dist/jena/binaries/apache-jena-fuseki-${FUSEKI_VERSION}.tar.gz" ) \
+    | tar -xz -C /opt && \
     mv "/opt/apache-jena-fuseki-${FUSEKI_VERSION}" /opt/fuseki
 
 WORKDIR /opt/fuseki
