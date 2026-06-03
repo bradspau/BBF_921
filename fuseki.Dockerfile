@@ -6,7 +6,7 @@ RUN apt-get update && \
     apt-get install -y --no-install-recommends curl tini && \
     rm -rf /var/lib/apt/lists/* && \
     curl -fsSL \
-      "https://archive.apache.org/dist/jena/binaries/apache-jena-fuseki-${FUSEKI_VERSION}.tar.gz" \
+      "https://dlcdn.apache.org/jena/binaries/apache-jena-fuseki-${FUSEKI_VERSION}.tar.gz" \
       | tar -xz -C /opt && \
     mv "/opt/apache-jena-fuseki-${FUSEKI_VERSION}" /opt/fuseki
 
