@@ -191,6 +191,21 @@ class TestEvaluateIntentTurtleExpression:
 # ── evaluate_turtle_conditions — unit tests (no Fuseki) ───────────────────────
 
 
+_RANGE_TURTLE = (
+    "@prefix quan: <http://tio.models.tmforum.org/tio/v3.6.0/QuantityOntology/> .\n"
+    "@prefix rdf:  <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .\n"
+    "@prefix xsd:  <http://www.w3.org/2001/XMLSchema#> .\n"
+    "<urn:t:cmp> a quan:quaninRange ;\n"
+    "    rdf:first <urn:t:val> ;\n"
+    "    rdf:rest  <urn:t:r1> .\n"
+    "<urn:t:r1> rdf:first <urn:t:lo> ; rdf:rest <urn:t:r2> .\n"
+    "<urn:t:r2> rdf:first <urn:t:hi> .\n"
+    '<urn:t:val> rdf:value "{val}"^^xsd:decimal .\n'
+    '<urn:t:lo>  rdf:value "{lo}"^^xsd:decimal .\n'
+    '<urn:t:hi>  rdf:value "{hi}"^^xsd:decimal .\n'
+)
+
+
 class TestEvaluateTurtleConditions:
     def _make_turtle(self, rdf_type: str, obs: str, bnd: str) -> str:
         return (
@@ -204,6 +219,8 @@ class TestEvaluateTurtleConditions:
             f'<urn:t:obs> rdf:value "{obs}"^^xsd:decimal .\n'
             f'<urn:t:bnd> rdf:value "{bnd}"^^xsd:decimal .\n'
         )
+
+    # ── aggregate state ───────────────────────────────────────────────────────
 
     def test_quanatLeast_pass(self):
         assert evaluate_turtle_conditions(self._make_turtle("quanatLeast", "100", "100"))["intentHandlingState"] == "Fulfilled"
@@ -236,46 +253,105 @@ class TestEvaluateTurtleConditions:
         assert evaluate_turtle_conditions(self._make_turtle("quanexactly", "42", "43"))["intentHandlingState"] == "Degraded"
 
     def test_quaninRange_pass(self):
-        turtle = (
-            "@prefix quan: <http://tio.models.tmforum.org/tio/v3.6.0/QuantityOntology/> .\n"
-            "@prefix rdf:  <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .\n"
-            "@prefix xsd:  <http://www.w3.org/2001/XMLSchema#> .\n"
-            "<urn:t:cmp> a quan:quaninRange ;\n"
-            "    rdf:first <urn:t:val> ;\n"
-            "    rdf:rest  <urn:t:r1> .\n"
-            "<urn:t:r1> rdf:first <urn:t:lo> ; rdf:rest <urn:t:r2> .\n"
-            "<urn:t:r2> rdf:first <urn:t:hi> .\n"
-            '<urn:t:val> rdf:value "50"^^xsd:decimal .\n'
-            '<urn:t:lo>  rdf:value "10"^^xsd:decimal .\n'
-            '<urn:t:hi>  rdf:value "100"^^xsd:decimal .\n'
-        )
-        assert evaluate_turtle_conditions(turtle)["intentHandlingState"] == "Fulfilled"
+        assert evaluate_turtle_conditions(_RANGE_TURTLE.format(val="50", lo="10", hi="100"))["intentHandlingState"] == "Fulfilled"
 
     def test_quaninRange_fail_below(self):
-        turtle = (
-            "@prefix quan: <http://tio.models.tmforum.org/tio/v3.6.0/QuantityOntology/> .\n"
-            "@prefix rdf:  <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .\n"
-            "@prefix xsd:  <http://www.w3.org/2001/XMLSchema#> .\n"
-            "<urn:t:cmp> a quan:quaninRange ;\n"
-            "    rdf:first <urn:t:val> ;\n"
-            "    rdf:rest  <urn:t:r1> .\n"
-            "<urn:t:r1> rdf:first <urn:t:lo> ; rdf:rest <urn:t:r2> .\n"
-            "<urn:t:r2> rdf:first <urn:t:hi> .\n"
-            '<urn:t:val> rdf:value "5"^^xsd:decimal .\n'
-            '<urn:t:lo>  rdf:value "10"^^xsd:decimal .\n'
-            '<urn:t:hi>  rdf:value "100"^^xsd:decimal .\n'
-        )
-        assert evaluate_turtle_conditions(turtle)["intentHandlingState"] == "Degraded"
+        assert evaluate_turtle_conditions(_RANGE_TURTLE.format(val="5", lo="10", hi="100"))["intentHandlingState"] == "Degraded"
 
     def test_no_conditions_returns_degraded(self):
         result = evaluate_turtle_conditions("@prefix : <http://example.org/> .")
         assert result["intentHandlingState"] == "Degraded"
         assert "No quantity conditions" in result["reason"]
+        assert result["conditions"] == []
 
     def test_invalid_turtle_returns_degraded(self):
         result = evaluate_turtle_conditions("this is !! not valid turtle")
         assert result["intentHandlingState"] == "Degraded"
         assert "parse error" in result["reason"].lower()
+        assert result["conditions"] == []
+
+    # ── per-condition detail ──────────────────────────────────────────────────
+
+    def test_conditions_list_present_on_fulfilled(self):
+        result = evaluate_turtle_conditions(self._make_turtle("quanatLeast", "120", "100"))
+        assert result["intentHandlingState"] == "Fulfilled"
+        assert len(result["conditions"]) == 1
+        c = result["conditions"][0]
+        assert c["type"] == "quanatLeast"
+        assert c["operator"] == ">="
+        assert c["observed"] == 120.0
+        assert c["bound"] == 100.0
+        assert c["passed"] is True
+
+    def test_conditions_list_present_on_degraded(self):
+        result = evaluate_turtle_conditions(self._make_turtle("quansmaller", "30", "25"))
+        assert result["intentHandlingState"] == "Degraded"
+        assert len(result["conditions"]) == 1
+        c = result["conditions"][0]
+        assert c["type"] == "quansmaller"
+        assert c["operator"] == "<"
+        assert c["observed"] == 30.0
+        assert c["bound"] == 25.0
+        assert c["passed"] is False
+
+    def test_quaninRange_condition_fields(self):
+        result = evaluate_turtle_conditions(_RANGE_TURTLE.format(val="50", lo="10", hi="100"))
+        c = result["conditions"][0]
+        assert c["type"] == "quaninRange"
+        assert c["operator"] == "<=<="
+        assert c["observed"] == 50.0
+        assert c["lower"] == 10.0
+        assert c["upper"] == 100.0
+        assert c["passed"] is True
+
+    def test_multi_condition_all_pass(self):
+        """Two conditions in one Turtle — both pass → Fulfilled, both in list."""
+        turtle = (
+            "@prefix quan: <http://tio.models.tmforum.org/tio/v3.6.0/QuantityOntology/> .\n"
+            "@prefix rdf:  <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .\n"
+            "@prefix xsd:  <http://www.w3.org/2001/XMLSchema#> .\n"
+            # downstream >= 100
+            "<urn:t:dl> a quan:quanatLeast ; rdf:first <urn:t:dl_obs> ; rdf:rest <urn:t:dl_r> .\n"
+            "<urn:t:dl_r> rdf:first <urn:t:dl_bnd> .\n"
+            '<urn:t:dl_obs> rdf:value "120"^^xsd:decimal .\n'
+            '<urn:t:dl_bnd> rdf:value "100"^^xsd:decimal .\n'
+            # latency < 25
+            "<urn:t:lat> a quan:quansmaller ; rdf:first <urn:t:lat_obs> ; rdf:rest <urn:t:lat_r> .\n"
+            "<urn:t:lat_r> rdf:first <urn:t:lat_bnd> .\n"
+            '<urn:t:lat_obs> rdf:value "10"^^xsd:decimal .\n'
+            '<urn:t:lat_bnd> rdf:value "25"^^xsd:decimal .\n'
+        )
+        result = evaluate_turtle_conditions(turtle)
+        assert result["intentHandlingState"] == "Fulfilled"
+        assert len(result["conditions"]) == 2
+        assert all(c["passed"] for c in result["conditions"])
+
+    def test_multi_condition_one_fails(self):
+        """Two conditions — one fails → Degraded, failed condition visible in list."""
+        turtle = (
+            "@prefix quan: <http://tio.models.tmforum.org/tio/v3.6.0/QuantityOntology/> .\n"
+            "@prefix rdf:  <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .\n"
+            "@prefix xsd:  <http://www.w3.org/2001/XMLSchema#> .\n"
+            # downstream >= 100 — PASSES (120 >= 100)
+            "<urn:t:dl> a quan:quanatLeast ; rdf:first <urn:t:dl_obs> ; rdf:rest <urn:t:dl_r> .\n"
+            "<urn:t:dl_r> rdf:first <urn:t:dl_bnd> .\n"
+            '<urn:t:dl_obs> rdf:value "120"^^xsd:decimal .\n'
+            '<urn:t:dl_bnd> rdf:value "100"^^xsd:decimal .\n'
+            # latency < 25 — FAILS (30 >= 25)
+            "<urn:t:lat> a quan:quansmaller ; rdf:first <urn:t:lat_obs> ; rdf:rest <urn:t:lat_r> .\n"
+            "<urn:t:lat_r> rdf:first <urn:t:lat_bnd> .\n"
+            '<urn:t:lat_obs> rdf:value "30"^^xsd:decimal .\n'
+            '<urn:t:lat_bnd> rdf:value "25"^^xsd:decimal .\n'
+        )
+        result = evaluate_turtle_conditions(turtle)
+        assert result["intentHandlingState"] == "Degraded"
+        assert len(result["conditions"]) == 2
+        passed = [c for c in result["conditions"] if c["passed"]]
+        failed = [c for c in result["conditions"] if not c["passed"]]
+        assert len(passed) == 1
+        assert len(failed) == 1
+        assert failed[0]["type"] == "quansmaller"
+        assert failed[0]["observed"] == 30.0
 
 
 # ── dispatcher ────────────────────────────────────────────────────────────────

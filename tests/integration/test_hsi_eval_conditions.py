@@ -59,11 +59,15 @@ def _smaller_turtle(observed: str, bound: str) -> str:
 def _assert_fulfilled(turtle: str, msg: str) -> None:
     result = evaluate_turtle_conditions(turtle)
     assert result["intentHandlingState"] == "Fulfilled", f"{msg} — got: {result}"
+    assert len(result["conditions"]) == 1
+    assert result["conditions"][0]["passed"] is True
 
 
 def _assert_degraded(turtle: str, msg: str) -> None:
     result = evaluate_turtle_conditions(turtle)
     assert result["intentHandlingState"] == "Degraded", f"{msg} — got: {result}"
+    assert len(result["conditions"]) == 1
+    assert result["conditions"][0]["passed"] is False
 
 
 # ── Downstream bandwidth ≥ 100 Mbps ──────────────────────────────────────────
