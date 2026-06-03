@@ -11,6 +11,7 @@
 - Start dev server: `uvicorn src.main:app --reload`
 - Lint: `ruff check src/`
 - Seed data: `python seed_data/seed_intents.py`
+- Docker (requires sudo on this machine): `sudo docker compose up --build`
 
 ## Rules
 - Read the listed docs/ file before writing code for each phase
@@ -51,6 +52,22 @@
 | Swagger Downloader | `.claude/skills/swagger-openapi-downloader/SKILL.md` | fetching, validating, parsing remote OAS/Swagger files |
 | Swagger to Code | `.claude/skills/swagger-to-code-generator/SKILL.md` | generating server stubs and client code from OAS spec |
 | Code Reviewer | `.claude/skills/code-reviewer/SKILL.md` | security, performance, best-practice review on any generated or modified code |
+
+## Infrastructure
+- Custom `fuseki.Dockerfile` builds ARM64-native Fuseki from `eclipse-temurin:17-jre-jammy` + Fuseki 5.6.0 (archive.apache.org) — `stain/jena-fuseki` is amd64-only
+- Fuseki 6.x `--config` assembler is BROKEN for `tdb2:DatasetTDB2` — use Fuseki 5.6.0
+- `fuseki-config.ttl` defines two datasets: `tmf921` (TDB2, API store) + `tmf921-eval` (in-memory InfModel + TIO rules)
+- No git remote configured — `git push` will fail until `git remote add origin <url>`
+
+## Fuseki Operational Notes
+- Default graph is always empty — query with `GRAPH ?g { ?s ?p ?o }` in the console
+- Named graph URIs: `http://tmforum.org/api/v5/intents/{uuid}`, `/intentSpecifications/{uuid}`, `/reports/{uuid}`
+- `ensure_dataset()` treats 401/403 as OK — dataset pre-exists via assembler config
+- `tmf921-eval` dataset used exclusively by the intent evaluator (semaphore-serialised)
+
+## Security Patterns
+- All resource ID path params validated as UUID: `Annotated[str, Path(pattern=r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")]`
+- `lifecycleStatus` FSM uses ALL-CAPS only: `ACKNOWLEDGED`, `ACTIVE`, `FULFILLED`, `DEGRADED`, `SUSPENDED`, `TERMINATED`
 
 ## Base URLs
 ```
