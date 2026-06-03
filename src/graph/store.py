@@ -140,8 +140,9 @@ class FusekiClient:
             "/$/datasets",
             data={"dbName": self._dataset, "dbType": "tdb2"},
         )
-        # 200/201 = created; 409 = already exists — all fine
-        if resp.status_code not in (200, 201, 409):
+        # 200/201 = created; 409 = already exists;
+        # 401/403 = admin auth required but dataset pre-exists via --loc
+        if resp.status_code not in (200, 201, 409, 401, 403):
             resp.raise_for_status()
         logger.debug("Dataset ready: %s", self._dataset)
 
