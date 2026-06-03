@@ -1,10 +1,11 @@
 services:
   fuseki:
-    image: apache/jena-fuseki:latest
+    image: stain/jena-fuseki:latest
+    platform: linux/amd64
     environment:
       ADMIN_PASSWORD: admin
+      FUSEKI_DATASET_1: tmf921
       JVM_ARGS: -Xmx2g
-    command: ["--update", "--tdb2", "--loc", "/fuseki/databases/tmf921", "/tmf921"]
     volumes:
       - fuseki_data:/fuseki/databases
     ports:
