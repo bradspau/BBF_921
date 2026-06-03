@@ -3,25 +3,29 @@ Intent Handler evaluator.
 
 Flow:
   1. Query the intent's named graph for expressionValue and expression type.
-  2. Acquire the eval semaphore (one evaluation at a time against the shared
-     in-memory inference dataset).
-  3. Clear the eval dataset default graph.
-  4. Load expressionValue Turtle into the eval dataset default graph.
-  5. Query the eval dataset for rule-derived intentHandlingState.
-  6. Clear the eval dataset default graph.
-  7. Release semaphore and return result.
+  2. Parse the TurtleExpression with RDFLib.
+  3. Evaluate all TIO quantity conditions in Python.
+  4. Return intentHandlingState: Fulfilled if all conditions pass, Degraded otherwise.
 
 Only TurtleExpression content is evaluated. JsonLdExpression is stored
 opaquely; if no Turtle is present the handler defaults to Degraded.
 
-The eval dataset (tmf921-eval) is configured in fuseki-config.ttl with a
-ja:GenericRuleReasoner loaded from ontology/jena-rules/tio_all.rules.  Rules
-run inside Jena (Java) against the in-memory default graph.
+Quantity operators supported (TIO QuantityOntology v3.6.0):
+  quan:quanatLeast  — observed >= bound
+  quan:quanatMost   — observed <= bound
+  quan:quangreater  — observed >  bound
+  quan:quansmaller  — observed <  bound
+  quan:quanexactly  — observed == bound
+  quan:quaninRange  — lower <= observed <= upper
 """
 from __future__ import annotations
 
-import asyncio
 import logging
+from decimal import Decimal, InvalidOperation
+from operator import ge, gt, le, lt, eq
+
+import rdflib
+from rdflib.namespace import RDF
 
 from src.graph.nodes import intent_graph_uri, intent_node
 from src.graph.repositories.base_repository import PREFIXES
@@ -29,14 +33,16 @@ from src.graph.store import FusekiClient
 
 logger = logging.getLogger(__name__)
 
-_EVAL_DATASET = "tmf921-eval"
+_QUAN = rdflib.Namespace("http://tio.models.tmforum.org/tio/v3.6.0/QuantityOntology/")
 
-# One evaluation at a time: the eval dataset's default graph is shared and
-# in-memory; concurrent writes would corrupt each other's triples.
-_eval_semaphore = asyncio.Semaphore(1)
-
-_ICM = "http://tio.models.tmforum.org/tio/v3.6.0/IntentCommonModel/"
-_IMO = "http://tio.models.tmforum.org/tio/v3.6.0/IntentManagementOntology/"
+# (rdf_type, comparator, label)  — two-argument pattern
+_TWO_ARG_OPS: list[tuple[rdflib.URIRef, object, str]] = [
+    (_QUAN.quanatLeast, ge, ">="),
+    (_QUAN.quanatMost,  le, "<="),
+    (_QUAN.quangreater, gt, ">"),
+    (_QUAN.quansmaller, lt, "<"),
+    (_QUAN.quanexactly, eq, "=="),
+]
 
 _INTENT_QUERY = """\
 {prefixes}
@@ -50,34 +56,94 @@ WHERE {{
 }}
 """
 
-# Query the eval dataset default graph.  The TIO GenericRuleReasoner derives
-# imo:intentHandlingState from the expression triples; no explicit assertion needed.
-_STATE_QUERY = f"""\
-PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
-PREFIX icm: <{_ICM}>
-PREFIX imo: <{_IMO}>
-SELECT ?state
-WHERE {{
-    {{ ?s icm:intentHandlingState ?state }}
-    UNION
-    {{ ?s imo:intentHandlingState ?state }}
-    UNION
-    {{ ?s imo:imohandlingState ?state }}
-}}
-LIMIT 1
-"""
+
+def evaluate_turtle_conditions(turtle_str: str) -> dict:
+    """
+    Parse TIO Turtle and evaluate all quantity conditions in Python.
+
+    Returns {"intentHandlingState": "Fulfilled"|"Degraded", "reason": str|None}.
+    """
+    g = rdflib.Graph()
+    try:
+        g.parse(data=turtle_str, format="turtle")
+    except Exception as exc:
+        return {"intentHandlingState": "Degraded", "reason": f"Turtle parse error: {exc}"}
+
+    results: list[tuple[bool, str]] = []
+
+    # ── Two-argument operators ────────────────────────────────────────────────
+    for rdf_type, cmp_op, sym in _TWO_ARG_OPS:
+        for node in g.subjects(RDF.type, rdf_type):
+            val_node = g.value(node, RDF.first)
+            rest = g.value(node, RDF.rest)
+            bnd_node = g.value(rest, RDF.first) if rest is not None else None
+            if val_node is None or bnd_node is None:
+                results.append((False, f"{rdf_type.split('/')[-1]}: missing operand nodes"))
+                continue
+            obs_lit = g.value(val_node, RDF.value)
+            bnd_lit = g.value(bnd_node, RDF.value)
+            if obs_lit is None or bnd_lit is None:
+                results.append((False, f"{rdf_type.split('/')[-1]}: missing rdf:value"))
+                continue
+            try:
+                obs = Decimal(str(obs_lit))
+                bnd = Decimal(str(bnd_lit))
+            except InvalidOperation:
+                results.append((False, f"{rdf_type.split('/')[-1]}: non-numeric value"))
+                continue
+            ok = bool(cmp_op(obs, bnd))
+            results.append((ok, f"{obs} {sym} {bnd}: {'pass' if ok else 'FAIL'}"))
+
+    # ── quan:quaninRange: lower <= value <= upper ─────────────────────────────
+    for node in g.subjects(RDF.type, _QUAN.quaninRange):
+        val_node = g.value(node, RDF.first)
+        r1 = g.value(node, RDF.rest)
+        lo_node = g.value(r1, RDF.first) if r1 is not None else None
+        r2 = g.value(r1, RDF.rest) if r1 is not None else None
+        hi_node = g.value(r2, RDF.first) if r2 is not None else None
+        if val_node is None or lo_node is None or hi_node is None:
+            results.append((False, "quaninRange: missing operand nodes"))
+            continue
+        val_lit = g.value(val_node, RDF.value)
+        lo_lit = g.value(lo_node, RDF.value)
+        hi_lit = g.value(hi_node, RDF.value)
+        if val_lit is None or lo_lit is None or hi_lit is None:
+            results.append((False, "quaninRange: missing rdf:value"))
+            continue
+        try:
+            val = Decimal(str(val_lit))
+            lo = Decimal(str(lo_lit))
+            hi = Decimal(str(hi_lit))
+        except InvalidOperation:
+            results.append((False, "quaninRange: non-numeric value"))
+            continue
+        ok = bool(lo <= val <= hi)
+        results.append((ok, f"{lo} <= {val} <= {hi}: {'pass' if ok else 'FAIL'}"))
+
+    if not results:
+        return {
+            "intentHandlingState": "Degraded",
+            "reason": "No quantity conditions found in expression",
+        }
+
+    failed = [reason for ok, reason in results if not ok]
+    if failed:
+        return {
+            "intentHandlingState": "Degraded",
+            "reason": f"Conditions not met: {'; '.join(failed)}",
+        }
+    return {"intentHandlingState": "Fulfilled", "reason": None}
 
 
 async def evaluate_intent(intent_id: str, client: FusekiClient) -> dict:
     """
-    Evaluate an intent and return its rule-derived intentHandlingState.
+    Evaluate an intent and return its intentHandlingState.
 
     Returns a dict: {"intentHandlingState": str, "reason": str | None}
     """
     graph_uri = str(intent_graph_uri(intent_id))
     node_uri = str(intent_node(intent_id))
 
-    # Step 1 — fetch expression type and value from the intent's named graph
     rows = await client.query(
         _INTENT_QUERY.format(prefixes=PREFIXES, graph=graph_uri, uri=node_uri)
     )
@@ -103,35 +169,4 @@ async def evaluate_intent(intent_id: str, client: FusekiClient) -> dict:
             "reason": f"No Turtle expression to evaluate (type={expr_type})",
         }
 
-    # Steps 2-6 — run inference in the shared eval dataset (serialised)
-    async with _eval_semaphore:
-        # Step 3 — clear any leftover triples from a previous evaluation
-        try:
-            await client.update("CLEAR DEFAULT", dataset=_EVAL_DATASET)
-        except Exception as exc:
-            logger.warning("evaluate_intent: pre-clear failed for %s: %s", intent_id, exc)
-
-        # Step 4 — load expression Turtle into the eval dataset default graph
-        try:
-            await client.gsp_post(None, expr_value, dataset=_EVAL_DATASET)
-        except Exception as exc:
-            logger.error("evaluate_intent: gsp_post failed for %s: %s", intent_id, exc)
-            return {"intentHandlingState": "Degraded", "reason": f"Expression load failed: {exc}"}
-
-        # Step 5 — query for the rule-derived intentHandlingState
-        try:
-            state_rows = await client.query(_STATE_QUERY, dataset=_EVAL_DATASET)
-            if state_rows:
-                raw = (state_rows[0].get("state") or {}).get("value", "")
-                state = raw.rsplit("#", 1)[-1].rsplit("/", 1)[-1] or "Degraded"
-                return {"intentHandlingState": state, "reason": None}
-            return {
-                "intentHandlingState": "Degraded",
-                "reason": "No intentHandlingState inferred from expression",
-            }
-        finally:
-            # Step 6 — always clear the eval dataset after use
-            try:
-                await client.update("CLEAR DEFAULT", dataset=_EVAL_DATASET)
-            except Exception as exc:
-                logger.warning("evaluate_intent: post-clear failed for %s: %s", intent_id, exc)
+    return evaluate_turtle_conditions(expr_value)

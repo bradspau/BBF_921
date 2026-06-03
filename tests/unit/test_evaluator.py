@@ -5,10 +5,7 @@ All HTTP calls are intercepted by respx; no live Fuseki required.
 
 Evaluator flow:
   - Intent expression query  → tmf921/sparql
-  - CLEAR DEFAULT (pre)      → tmf921-eval/update
-  - GSP POST Turtle          → tmf921-eval/data  (no graph= param)
-  - State query              → tmf921-eval/sparql
-  - CLEAR DEFAULT (post)     → tmf921-eval/update
+  - Turtle parsed with RDFLib and evaluated in Python (no Fuseki eval dataset)
 """
 from __future__ import annotations
 
@@ -20,12 +17,11 @@ import respx
 import httpx
 
 from src.graph.store import FusekiClient
-from src.handler.evaluator import evaluate_intent
+from src.handler.evaluator import evaluate_intent, evaluate_turtle_conditions
 from src.handler.dispatcher import dispatch_evaluation, schedule_evaluation
 
-FUSEKI   = "http://localhost:3030"
-DATASET  = "tmf921"
-EVAL_DS  = "tmf921-eval"
+FUSEKI    = "http://localhost:3030"
+DATASET   = "tmf921"
 INTENT_ID = "intent-aaa"
 
 _INTENT_GRAPH = f"http://tmforum.org/api/v5/intents/{INTENT_ID}"
@@ -52,15 +48,6 @@ def _json_ld_expr_row() -> dict:
             "value": "http://tmforum.org/api/v5/JsonLdExpression",
         },
         "exprValue": {"type": "literal", "value": '{"@context": {}}'},
-    }
-
-
-def _state_row(state: str = "Active") -> dict:
-    return {
-        "state": {
-            "type": "uri",
-            "value": f"http://tio.models.tmforum.org/tio/v3.6.0/IntentManagementOntology/{state}",
-        }
     }
 
 
@@ -100,128 +87,195 @@ class TestEvaluateIntentNoExpression:
         assert result["intentHandlingState"] == "Degraded"
 
 
-# ── evaluate_intent — Turtle expression with eval dataset ─────────────────────
+# ── evaluate_intent — Turtle expression evaluated in Python ───────────────────
+
+QUAN = "http://tio.models.tmforum.org/tio/v3.6.0/QuantityOntology/"
+
+_AT_LEAST_TURTLE = """\
+@prefix quan: <http://tio.models.tmforum.org/tio/v3.6.0/QuantityOntology/> .
+@prefix rdf:  <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix xsd:  <http://www.w3.org/2001/XMLSchema#> .
+<urn:t:cmp> a quan:quanatLeast ;
+    rdf:first <urn:t:obs> ;
+    rdf:rest  <urn:t:rst> .
+<urn:t:rst> rdf:first <urn:t:bnd> .
+<urn:t:obs> rdf:value "{obs}"^^xsd:decimal .
+<urn:t:bnd> rdf:value "{bnd}"^^xsd:decimal .
+"""
+
+_SMALLER_TURTLE = """\
+@prefix quan: <http://tio.models.tmforum.org/tio/v3.6.0/QuantityOntology/> .
+@prefix rdf:  <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix xsd:  <http://www.w3.org/2001/XMLSchema#> .
+<urn:t:cmp> a quan:quansmaller ;
+    rdf:first <urn:t:obs> ;
+    rdf:rest  <urn:t:rst> .
+<urn:t:rst> rdf:first <urn:t:bnd> .
+<urn:t:obs> rdf:value "{obs}"^^xsd:decimal .
+<urn:t:bnd> rdf:value "{bnd}"^^xsd:decimal .
+"""
 
 
 class TestEvaluateIntentTurtleExpression:
     @respx.mock
-    async def test_state_found_returns_correct_state(self):
-        turtle = "@prefix imo: <http://tio.models.tmforum.org/tio/v3.6.0/IntentManagementOntology/> ."
+    async def test_conditions_fulfilled_when_all_pass(self):
+        """quanatLeast with obs>=bound → Fulfilled."""
+        turtle = _AT_LEAST_TURTLE.format(obs="120", bnd="100")
         respx.post(f"{FUSEKI}/{DATASET}/sparql").mock(
             return_value=httpx.Response(200, json=_sparql_bindings(_turtle_expr_row(turtle)))
         )
-        respx.post(f"{FUSEKI}/{EVAL_DS}/update").mock(return_value=httpx.Response(200))
-        respx.post(f"{FUSEKI}/{EVAL_DS}/data").mock(return_value=httpx.Response(200))
-        respx.post(f"{FUSEKI}/{EVAL_DS}/sparql").mock(
-            return_value=httpx.Response(200, json=_sparql_bindings(_state_row("Active")))
-        )
-
         async with FusekiClient(FUSEKI, DATASET) as client:
             result = await evaluate_intent(INTENT_ID, client)
-
-        assert result["intentHandlingState"] == "Active"
+        assert result["intentHandlingState"] == "Fulfilled"
         assert result.get("reason") is None
 
     @respx.mock
-    async def test_no_state_inferred_returns_degraded(self):
-        turtle = "@prefix : <http://example.org/> ."
+    async def test_conditions_degraded_when_any_fails(self):
+        """quanatLeast with obs<bound → Degraded."""
+        turtle = _AT_LEAST_TURTLE.format(obs="80", bnd="100")
         respx.post(f"{FUSEKI}/{DATASET}/sparql").mock(
             return_value=httpx.Response(200, json=_sparql_bindings(_turtle_expr_row(turtle)))
         )
-        respx.post(f"{FUSEKI}/{EVAL_DS}/update").mock(return_value=httpx.Response(200))
-        respx.post(f"{FUSEKI}/{EVAL_DS}/data").mock(return_value=httpx.Response(200))
-        respx.post(f"{FUSEKI}/{EVAL_DS}/sparql").mock(
-            return_value=httpx.Response(200, json=_sparql_bindings())
-        )
-
         async with FusekiClient(FUSEKI, DATASET) as client:
             result = await evaluate_intent(INTENT_ID, client)
-
         assert result["intentHandlingState"] == "Degraded"
-        assert "No intentHandlingState" in (result.get("reason") or "")
+        assert "Conditions not met" in (result.get("reason") or "")
 
     @respx.mock
-    async def test_gsp_post_failure_returns_degraded(self):
+    async def test_no_conditions_in_turtle_returns_degraded(self):
+        """Turtle with no quantity conditions → Degraded."""
         turtle = "@prefix : <http://example.org/> ."
         respx.post(f"{FUSEKI}/{DATASET}/sparql").mock(
             return_value=httpx.Response(200, json=_sparql_bindings(_turtle_expr_row(turtle)))
         )
-        respx.post(f"{FUSEKI}/{EVAL_DS}/update").mock(return_value=httpx.Response(200))
-        respx.post(f"{FUSEKI}/{EVAL_DS}/data").mock(
-            return_value=httpx.Response(500, text="Internal Server Error")
-        )
-
         async with FusekiClient(FUSEKI, DATASET) as client:
             result = await evaluate_intent(INTENT_ID, client)
-
         assert result["intentHandlingState"] == "Degraded"
-        assert "failed" in (result.get("reason") or "").lower()
+        assert "No quantity conditions" in (result.get("reason") or "")
 
     @respx.mock
-    async def test_eval_dataset_always_cleared(self):
-        """CLEAR DEFAULT must be called before and after the state query."""
-        turtle = "@prefix : <http://example.org/> ."
+    async def test_invalid_turtle_returns_degraded(self):
+        """Malformed Turtle → parse error → Degraded."""
+        turtle = "this is not valid turtle !!!"
         respx.post(f"{FUSEKI}/{DATASET}/sparql").mock(
             return_value=httpx.Response(200, json=_sparql_bindings(_turtle_expr_row(turtle)))
         )
-        respx.post(f"{FUSEKI}/{EVAL_DS}/data").mock(return_value=httpx.Response(200))
-        respx.post(f"{FUSEKI}/{EVAL_DS}/sparql").mock(
-            return_value=httpx.Response(200, json=_sparql_bindings(_state_row("Active")))
-        )
-        update_route = respx.post(f"{FUSEKI}/{EVAL_DS}/update").mock(
-            return_value=httpx.Response(200)
-        )
-
-        async with FusekiClient(FUSEKI, DATASET) as client:
-            await evaluate_intent(INTENT_ID, client)
-
-        assert update_route.call_count == 2
-        for call in update_route.calls:
-            body = call.request.content.decode()
-            assert "CLEAR" in body and "DEFAULT" in body
-
-    @respx.mock
-    async def test_clear_failure_does_not_raise(self):
-        """A CLEAR DEFAULT failure must be swallowed, not raised."""
-        turtle = "@prefix : <http://example.org/> ."
-        respx.post(f"{FUSEKI}/{DATASET}/sparql").mock(
-            return_value=httpx.Response(200, json=_sparql_bindings(_turtle_expr_row(turtle)))
-        )
-        respx.post(f"{FUSEKI}/{EVAL_DS}/data").mock(return_value=httpx.Response(200))
-        respx.post(f"{FUSEKI}/{EVAL_DS}/sparql").mock(
-            return_value=httpx.Response(200, json=_sparql_bindings(_state_row("Active")))
-        )
-        respx.post(f"{FUSEKI}/{EVAL_DS}/update").mock(
-            return_value=httpx.Response(500, text="update failed")
-        )
-
         async with FusekiClient(FUSEKI, DATASET) as client:
             result = await evaluate_intent(INTENT_ID, client)
-
-        assert result["intentHandlingState"] == "Active"
+        assert result["intentHandlingState"] == "Degraded"
+        assert "parse error" in (result.get("reason") or "").lower()
 
     @respx.mock
-    async def test_state_uri_fragment_parsed_correctly(self):
-        """State URIs using a # fragment are trimmed to the local name."""
-        turtle = "@prefix : <http://example.org/> ."
+    async def test_quansmaller_in_range_returns_fulfilled(self):
+        """quansmaller with obs<bound → Fulfilled."""
+        turtle = _SMALLER_TURTLE.format(obs="10", bnd="25")
         respx.post(f"{FUSEKI}/{DATASET}/sparql").mock(
             return_value=httpx.Response(200, json=_sparql_bindings(_turtle_expr_row(turtle)))
         )
-        respx.post(f"{FUSEKI}/{EVAL_DS}/update").mock(return_value=httpx.Response(200))
-        respx.post(f"{FUSEKI}/{EVAL_DS}/data").mock(return_value=httpx.Response(200))
-        respx.post(f"{FUSEKI}/{EVAL_DS}/sparql").mock(
-            return_value=httpx.Response(200, json=_sparql_bindings({
-                "state": {
-                    "type": "uri",
-                    "value": "http://tio.models.tmforum.org/tio/v3.6.0/IntentManagmentOntology#Fulfilled",
-                }
-            }))
-        )
-
         async with FusekiClient(FUSEKI, DATASET) as client:
             result = await evaluate_intent(INTENT_ID, client)
-
         assert result["intentHandlingState"] == "Fulfilled"
+
+    @respx.mock
+    async def test_quansmaller_at_boundary_returns_degraded(self):
+        """quansmaller with obs==bound → Degraded (strict less-than)."""
+        turtle = _SMALLER_TURTLE.format(obs="25", bnd="25")
+        respx.post(f"{FUSEKI}/{DATASET}/sparql").mock(
+            return_value=httpx.Response(200, json=_sparql_bindings(_turtle_expr_row(turtle)))
+        )
+        async with FusekiClient(FUSEKI, DATASET) as client:
+            result = await evaluate_intent(INTENT_ID, client)
+        assert result["intentHandlingState"] == "Degraded"
+
+
+# ── evaluate_turtle_conditions — unit tests (no Fuseki) ───────────────────────
+
+
+class TestEvaluateTurtleConditions:
+    def _make_turtle(self, rdf_type: str, obs: str, bnd: str) -> str:
+        return (
+            "@prefix quan: <http://tio.models.tmforum.org/tio/v3.6.0/QuantityOntology/> .\n"
+            "@prefix rdf:  <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .\n"
+            "@prefix xsd:  <http://www.w3.org/2001/XMLSchema#> .\n"
+            f"<urn:t:cmp> a quan:{rdf_type} ;\n"
+            "    rdf:first <urn:t:obs> ;\n"
+            "    rdf:rest  <urn:t:rst> .\n"
+            "<urn:t:rst> rdf:first <urn:t:bnd> .\n"
+            f'<urn:t:obs> rdf:value "{obs}"^^xsd:decimal .\n'
+            f'<urn:t:bnd> rdf:value "{bnd}"^^xsd:decimal .\n'
+        )
+
+    def test_quanatLeast_pass(self):
+        assert evaluate_turtle_conditions(self._make_turtle("quanatLeast", "100", "100"))["intentHandlingState"] == "Fulfilled"
+
+    def test_quanatLeast_fail(self):
+        assert evaluate_turtle_conditions(self._make_turtle("quanatLeast", "99", "100"))["intentHandlingState"] == "Degraded"
+
+    def test_quanatMost_pass(self):
+        assert evaluate_turtle_conditions(self._make_turtle("quanatMost", "5", "10"))["intentHandlingState"] == "Fulfilled"
+
+    def test_quanatMost_fail(self):
+        assert evaluate_turtle_conditions(self._make_turtle("quanatMost", "11", "10"))["intentHandlingState"] == "Degraded"
+
+    def test_quangreater_pass(self):
+        assert evaluate_turtle_conditions(self._make_turtle("quangreater", "101", "100"))["intentHandlingState"] == "Fulfilled"
+
+    def test_quangreater_equal_is_fail(self):
+        assert evaluate_turtle_conditions(self._make_turtle("quangreater", "100", "100"))["intentHandlingState"] == "Degraded"
+
+    def test_quansmaller_pass(self):
+        assert evaluate_turtle_conditions(self._make_turtle("quansmaller", "24", "25"))["intentHandlingState"] == "Fulfilled"
+
+    def test_quansmaller_equal_is_fail(self):
+        assert evaluate_turtle_conditions(self._make_turtle("quansmaller", "25", "25"))["intentHandlingState"] == "Degraded"
+
+    def test_quanexactly_pass(self):
+        assert evaluate_turtle_conditions(self._make_turtle("quanexactly", "42", "42"))["intentHandlingState"] == "Fulfilled"
+
+    def test_quanexactly_fail(self):
+        assert evaluate_turtle_conditions(self._make_turtle("quanexactly", "42", "43"))["intentHandlingState"] == "Degraded"
+
+    def test_quaninRange_pass(self):
+        turtle = (
+            "@prefix quan: <http://tio.models.tmforum.org/tio/v3.6.0/QuantityOntology/> .\n"
+            "@prefix rdf:  <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .\n"
+            "@prefix xsd:  <http://www.w3.org/2001/XMLSchema#> .\n"
+            "<urn:t:cmp> a quan:quaninRange ;\n"
+            "    rdf:first <urn:t:val> ;\n"
+            "    rdf:rest  <urn:t:r1> .\n"
+            "<urn:t:r1> rdf:first <urn:t:lo> ; rdf:rest <urn:t:r2> .\n"
+            "<urn:t:r2> rdf:first <urn:t:hi> .\n"
+            '<urn:t:val> rdf:value "50"^^xsd:decimal .\n'
+            '<urn:t:lo>  rdf:value "10"^^xsd:decimal .\n'
+            '<urn:t:hi>  rdf:value "100"^^xsd:decimal .\n'
+        )
+        assert evaluate_turtle_conditions(turtle)["intentHandlingState"] == "Fulfilled"
+
+    def test_quaninRange_fail_below(self):
+        turtle = (
+            "@prefix quan: <http://tio.models.tmforum.org/tio/v3.6.0/QuantityOntology/> .\n"
+            "@prefix rdf:  <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .\n"
+            "@prefix xsd:  <http://www.w3.org/2001/XMLSchema#> .\n"
+            "<urn:t:cmp> a quan:quaninRange ;\n"
+            "    rdf:first <urn:t:val> ;\n"
+            "    rdf:rest  <urn:t:r1> .\n"
+            "<urn:t:r1> rdf:first <urn:t:lo> ; rdf:rest <urn:t:r2> .\n"
+            "<urn:t:r2> rdf:first <urn:t:hi> .\n"
+            '<urn:t:val> rdf:value "5"^^xsd:decimal .\n'
+            '<urn:t:lo>  rdf:value "10"^^xsd:decimal .\n'
+            '<urn:t:hi>  rdf:value "100"^^xsd:decimal .\n'
+        )
+        assert evaluate_turtle_conditions(turtle)["intentHandlingState"] == "Degraded"
+
+    def test_no_conditions_returns_degraded(self):
+        result = evaluate_turtle_conditions("@prefix : <http://example.org/> .")
+        assert result["intentHandlingState"] == "Degraded"
+        assert "No quantity conditions" in result["reason"]
+
+    def test_invalid_turtle_returns_degraded(self):
+        result = evaluate_turtle_conditions("this is !! not valid turtle")
+        assert result["intentHandlingState"] == "Degraded"
+        assert "parse error" in result["reason"].lower()
 
 
 # ── dispatcher ────────────────────────────────────────────────────────────────
