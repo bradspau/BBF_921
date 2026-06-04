@@ -67,12 +67,22 @@ Validity evaluation (tmf_validity_eval):
                       condition's own value.
 
 Guarantee evaluation (tmf_guarantee_eval rules Python port):
-  Pre-processing: _derive_guarantee_states walks ig:GuaranteeReport nodes and
-                  materialises ig:state by matching ig:GuaranteeAccepted or
-                  ig:GuaranteeRejected events (linked via imo:eventIssuedFor and
-                  icm:about) before any condition is evaluated.
-  ig:GuaranteeReport — passes iff ig:state == ig:GuaranteeStateCompliant;
-                       fails if state is ig:GuaranteeStateDegraded or absent.
+  Pre-processing: _derive_guarantee_states walks ig:igGuaranteeReport nodes and
+                  materialises ig:igstate by matching ig:igGuaranteeAccepted or
+                  ig:igGuaranteeRejected events (linked via imo:imoeventIssuedFor
+                  and icm:icmabout) before any condition is evaluated.
+  ig:igGuaranteeReport — passes iff ig:igstate == ig:igGuaranteeStateCompliant;
+                         fails if state is ig:igGuaranteeStateDegraded or absent.
+
+IntentSpecification evaluation (tmf_insp_eval rules Python port):
+  insp:inspvalueSelected    — passes if any value in OT's inspallowedValues
+                              container is also a member of any allowed container
+                              in the rdf:rest list.
+  insp:inspchosenAny        — passes if any rdfs:member ContentTemplate of the
+                              function node has an insp:inspcontent property.
+  insp:inspusedVocabularyFor — passes if any term from any vocabulary container
+                              in the rdf:rest list appears as a predicate on the
+                              intent element given in rdf:first.
 
 Metric resolution patterns (replaces Jena tmf_metrics_eval.rules):
   A) rdf:first → <metric URI>       — direct ref; resolved via met:Observation
@@ -104,6 +114,7 @@ _ICM  = rdflib.Namespace("http://tio.models.tmforum.org/tio/v3.6.0/IntentCommonM
 _IV   = rdflib.Namespace("http://tio.models.tmforum.org/tio/v3.6.0/IntentValidityOntology/")
 _IG   = rdflib.Namespace("http://tio.models.tmforum.org/tio/v3.6.0/IntentGuaranteeOntology/")
 _IMO  = rdflib.Namespace("http://tio.models.tmforum.org/tio/v3.6.0/IntentManagementOntology/")
+_INSP = rdflib.Namespace("http://tio.models.tmforum.org/tio/v3.6.0/IntentSpecification/")
 
 # (rdf_type, comparator, display_symbol) — two-argument quantity pattern
 _TWO_ARG_OPS: list[tuple[rdflib.URIRef, object, str]] = [
@@ -231,33 +242,33 @@ def _resolve_validity_chains(g: rdflib.Graph) -> None:
 
 def _derive_guarantee_states(g: rdflib.Graph) -> None:
     """
-    Apply tmf_guarantee_eval rules: materialise ig:state on ig:GuaranteeReport nodes.
+    Apply tmf_guarantee_eval rules: materialise ig:igstate on ig:igGuaranteeReport nodes.
 
     igReportStateCompliant:
-      (?R ig:GuaranteeReport) + (?E ig:GuaranteeAccepted) +
-      (?E imo:eventIssuedFor ?I) + (?R icm:about ?I)
-      → (?R ig:state ig:GuaranteeStateCompliant)
+      (?R ig:igGuaranteeReport) + (?E ig:igGuaranteeAccepted) +
+      (?E imo:imoeventIssuedFor ?I) + (?R icm:icmabout ?I)
+      → (?R ig:igstate ig:igGuaranteeStateCompliant)
 
     igReportStateDegraded:
-      same pattern with ig:GuaranteeRejected → ig:GuaranteeStateDegraded
+      same pattern with ig:igGuaranteeRejected → ig:igGuaranteeStateDegraded
 
-    Nodes that already carry ig:state (set by the expression itself) are left
+    Nodes that already carry ig:igstate (set by the expression itself) are left
     unchanged. Compliant takes precedence when both events are present.
     """
-    for report in list(g.subjects(RDF.type, _IG.GuaranteeReport)):
-        if g.value(report, _IG.state) is not None:
+    for report in list(g.subjects(RDF.type, _IG.igGuaranteeReport)):
+        if g.value(report, _IG.igstate) is not None:
             continue
-        intent = g.value(report, _ICM.about)
+        intent = g.value(report, _ICM.icmabout)
         if intent is None:
             continue
-        for event in g.subjects(RDF.type, _IG.GuaranteeAccepted):
-            if (event, _IMO.eventIssuedFor, intent) in g:
-                g.set((report, _IG.state, _IG.GuaranteeStateCompliant))
+        for event in g.subjects(RDF.type, _IG.igGuaranteeAccepted):
+            if (event, _IMO.imoeventIssuedFor, intent) in g:
+                g.set((report, _IG.igstate, _IG.igGuaranteeStateCompliant))
                 break
-        if g.value(report, _IG.state) is None:
-            for event in g.subjects(RDF.type, _IG.GuaranteeRejected):
-                if (event, _IMO.eventIssuedFor, intent) in g:
-                    g.set((report, _IG.state, _IG.GuaranteeStateDegraded))
+        if g.value(report, _IG.igstate) is None:
+            for event in g.subjects(RDF.type, _IG.igGuaranteeRejected):
+                if (event, _IMO.imoeventIssuedFor, intent) in g:
+                    g.set((report, _IG.igstate, _IG.igGuaranteeStateDegraded))
                     break
 
 
@@ -589,15 +600,86 @@ def _eval_validity_of(g: rdflib.Graph, node: rdflib.term.Node) -> tuple[bool, li
 
 def _eval_guarantee_report(g: rdflib.Graph, node: rdflib.term.Node) -> tuple[bool, list[dict]]:
     """
-    ig:GuaranteeReport — passes if ig:state is ig:GuaranteeStateCompliant.
-    Fails if state is ig:GuaranteeStateDegraded or if no state was derived.
+    ig:igGuaranteeReport — passes if ig:igstate is ig:igGuaranteeStateCompliant.
+    Fails if state is ig:igGuaranteeStateDegraded or if no state was derived.
     """
-    state = g.value(node, _IG.state)
-    if state == _IG.GuaranteeStateCompliant:
-        return True, [{"type": "GuaranteeReport", "state": "GuaranteeStateCompliant", "passed": True}]
-    if state == _IG.GuaranteeStateDegraded:
-        return False, [{"type": "GuaranteeReport", "state": "GuaranteeStateDegraded", "passed": False}]
-    return False, [{"type": "GuaranteeReport", "error": "no ig:state derived", "passed": False}]
+    state = g.value(node, _IG.igstate)
+    if state == _IG.igGuaranteeStateCompliant:
+        return True, [{"type": "GuaranteeReport", "state": "igGuaranteeStateCompliant", "passed": True}]
+    if state == _IG.igGuaranteeStateDegraded:
+        return False, [{"type": "GuaranteeReport", "state": "igGuaranteeStateDegraded", "passed": False}]
+    return False, [{"type": "GuaranteeReport", "error": "no ig:igstate derived", "passed": False}]
+
+
+# ── IntentSpecification leaf evaluators (tmf_insp_eval) ──────────────────────
+
+def _eval_value_selected(g: rdflib.Graph, node: rdflib.term.Node) -> tuple[bool, list[dict]]:
+    """
+    insp:inspvalueSelected — passes if the ObjectTemplate's inspallowedValues
+    container shares at least one member with any allowed container in rdf:rest.
+
+    Structure (RDF list):
+      rdf:first → OT (ObjectTemplate with insp:inspallowedValues)
+      rdf:rest  → container node whose rdfs:member items are allowed containers
+    """
+    ot = g.value(node, RDF.first)
+    rest = g.value(node, RDF.rest)
+    if ot is None:
+        return False, [{"type": "valueSelected", "error": "missing rdf:first (OT)", "passed": False}]
+    vals_container = g.value(ot, _INSP.inspallowedValues)
+    if vals_container is None:
+        return False, [{"type": "valueSelected", "error": "OT missing insp:inspallowedValues", "passed": False}]
+    chosen = frozenset(g.objects(vals_container, RDFS.member))
+    if not chosen:
+        return False, [{"type": "valueSelected", "error": "empty inspallowedValues container", "passed": False}]
+    allowed_containers = list(g.objects(rest, RDFS.member)) if rest is not None else []
+    if not allowed_containers:
+        return False, [{"type": "valueSelected", "error": "no allowed containers in rdf:rest", "passed": False}]
+    passed = any(chosen & frozenset(g.objects(ac, RDFS.member)) for ac in allowed_containers)
+    return passed, [{"type": "valueSelected", "passed": passed}]
+
+
+def _eval_chosen_any(g: rdflib.Graph, node: rdflib.term.Node) -> tuple[bool, list[dict]]:
+    """
+    insp:inspchosenAny — passes if any rdfs:member of the function node is an
+    insp:inspContentTemplate that has an insp:inspcontent property (i.e. was chosen).
+    """
+    members = list(g.objects(node, RDFS.member))
+    if not members:
+        return False, [{"type": "chosenAny", "error": "no rdfs:member items", "passed": False}]
+    passed = any(
+        (m, RDF.type, _INSP.inspContentTemplate) in g and g.value(m, _INSP.inspcontent) is not None
+        for m in members
+    )
+    return passed, [{"type": "chosenAny", "member_count": len(members), "passed": passed}]
+
+
+def _eval_used_vocabulary_for(g: rdflib.Graph, node: rdflib.term.Node) -> tuple[bool, list[dict]]:
+    """
+    insp:inspusedVocabularyFor — passes if any term from any vocabulary container
+    (members of the rdf:rest list) is used as a predicate on the intent element
+    (rdf:first).
+
+    Structure:
+      rdf:first → IntentElem
+      rdf:rest  → container whose rdfs:member items are VocabularyContainers;
+                  each VocabularyContainer has rdfs:member terms (predicates)
+    """
+    intent_elem = g.value(node, RDF.first)
+    vocab_list = g.value(node, RDF.rest)
+    if intent_elem is None:
+        return False, [{"type": "usedVocabularyFor", "error": "missing rdf:first (IntentElem)", "passed": False}]
+    if vocab_list is None:
+        return False, [{"type": "usedVocabularyFor", "error": "missing rdf:rest (VocabList)", "passed": False}]
+    vocab_containers = list(g.objects(vocab_list, RDFS.member))
+    if not vocab_containers:
+        return False, [{"type": "usedVocabularyFor", "error": "empty vocabulary list", "passed": False}]
+    elem_predicates = frozenset(g.predicates(intent_elem))
+    passed = any(
+        frozenset(g.objects(vc, RDFS.member)) & elem_predicates
+        for vc in vocab_containers
+    )
+    return passed, [{"type": "usedVocabularyFor", "passed": passed}]
 
 
 # ── Recursive tree evaluator ──────────────────────────────────────────────────
@@ -690,8 +772,16 @@ def _eval_node(g: rdflib.Graph, node: rdflib.term.Node) -> tuple[bool, list[dict
         return _eval_validity_of(g, node)
 
     # ── Guarantee report ──────────────────────────────────────────────────────
-    if (node, RDF.type, _IG.GuaranteeReport) in g:
+    if (node, RDF.type, _IG.igGuaranteeReport) in g:
         return _eval_guarantee_report(g, node)
+
+    # ── IntentSpecification functions ─────────────────────────────────────────
+    if (node, RDF.type, _INSP.inspvalueSelected) in g:
+        return _eval_value_selected(g, node)
+    if (node, RDF.type, _INSP.inspchosenAny) in g:
+        return _eval_chosen_any(g, node)
+    if (node, RDF.type, _INSP.inspusedVocabularyFor) in g:
+        return _eval_used_vocabulary_for(g, node)
 
     # ── Unknown/opaque — pass silently (no evaluable content) ────────────────
     return True, []
@@ -766,7 +856,8 @@ def _flat_scan(g: rdflib.Graph) -> list[dict]:
         _SET.setisMember, _SET.setintersectsWith, _SET.setincludedIn, _SET.setforAll,
         _ICM.DeliveryExpectation, _ICM.PropertyExpectation,
         _IV.ivvalidityOf,
-        _IG.GuaranteeReport,
+        _IG.igGuaranteeReport,
+        _INSP.inspvalueSelected, _INSP.inspchosenAny, _INSP.inspusedVocabularyFor,
     ):
         for node in g.subjects(RDF.type, rdf_type):
             if node in excluded or node in seen:
@@ -785,6 +876,7 @@ _SIMPLE_FAIL_TYPES = frozenset([
     "DeliveryExpectation", "PropertyExpectation",
     "validityOf", "validityGate",
     "GuaranteeReport",
+    "valueSelected", "chosenAny", "usedVocabularyFor",
 ])
 
 
