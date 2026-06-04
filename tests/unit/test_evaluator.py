@@ -1779,6 +1779,294 @@ class TestInspUsedVocabularyFor:
         assert result["intentHandlingState"] == "Fulfilled"
 
 
+# ── Math function evaluation (tmf_mathfn_eval.rules Python port) ─────────────
+
+_MF_PFX = """\
+@prefix mf:   <http://tio.models.tmforum.org/tio/v3.6.0/MathFunctions/> .
+@prefix quan: <http://tio.models.tmforum.org/tio/v3.6.0/QuantityOntology/> .
+@prefix rdf:  <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix xsd:  <http://www.w3.org/2001/XMLSchema#> .
+"""
+
+# Shared scaffold: mf:mflogistic node used as rdf:first of a quanatLeast cond
+_MF_COND_WRAP = (
+    "<urn:t:cond> a quan:quanatLeast ;\n"
+    "    rdf:first <urn:t:fn> ;\n"
+    "    rdf:rest  [ rdf:first <urn:t:bnd> ] .\n"
+    "<urn:t:bnd> rdf:value \"{bnd}\"^^xsd:decimal .\n"
+)
+
+
+class TestMfLogistic:
+    """mf:mflogistic — L / (1 + exp(-k*(x-x0))) + c"""
+
+    def test_midpoint_gives_half_max(self):
+        """At x=x0 with defaults, logistic(0) = 0.5; bound 0.4 → Fulfilled."""
+        turtle = (
+            _MF_PFX
+            + _MF_COND_WRAP.format(bnd="0.4")
+            + "<urn:t:fn> a mf:mflogistic ;\n"
+            "    mf:mfinput <urn:t:inp> .\n"
+            "<urn:t:inp> rdf:value \"0\"^^xsd:decimal .\n"
+        )
+        result = evaluate_turtle_conditions(turtle)
+        assert result["intentHandlingState"] == "Fulfilled"
+        c = result["conditions"][0]
+        assert c["passed"] is True
+        assert abs(c["observed"] - 0.5) < 1e-6
+
+    def test_large_positive_x_approaches_max(self):
+        """x=10, L=1, k=1 → logistic ≈ 0.9999; bound 0.99 → Fulfilled."""
+        turtle = (
+            _MF_PFX
+            + _MF_COND_WRAP.format(bnd="0.99")
+            + "<urn:t:fn> a mf:mflogistic ;\n"
+            "    mf:mfinput <urn:t:inp> ;\n"
+            "    mf:mfk <urn:t:k> ;\n"
+            "    mf:mfl <urn:t:l> .\n"
+            "<urn:t:inp> rdf:value \"10\"^^xsd:decimal .\n"
+            "<urn:t:k>   rdf:value \"1\"^^xsd:decimal .\n"
+            "<urn:t:l>   rdf:value \"1\"^^xsd:decimal .\n"
+        )
+        result = evaluate_turtle_conditions(turtle)
+        assert result["intentHandlingState"] == "Fulfilled"
+
+    def test_vertical_stretch_and_offset(self):
+        """L=2, c=1 at x=x0 → result = 2/2 + 1 = 2; bound 1.9 → Fulfilled."""
+        turtle = (
+            _MF_PFX
+            + _MF_COND_WRAP.format(bnd="1.9")
+            + "<urn:t:fn> a mf:mflogistic ;\n"
+            "    mf:mfinput <urn:t:inp> ;\n"
+            "    mf:mfl <urn:t:l> ;\n"
+            "    mf:mfc <urn:t:c> .\n"
+            "<urn:t:inp> rdf:value \"0\"^^xsd:decimal .\n"
+            "<urn:t:l>   rdf:value \"2\"^^xsd:decimal .\n"
+            "<urn:t:c>   rdf:value \"1\"^^xsd:decimal .\n"
+        )
+        result = evaluate_turtle_conditions(turtle)
+        assert result["intentHandlingState"] == "Fulfilled"
+        c = result["conditions"][0]
+        assert abs(c["observed"] - 2.0) < 1e-6
+
+    def test_large_negative_x_approaches_zero(self):
+        """x=-10 → logistic ≈ 0.00005; bound 0.001 → Degraded (0.00005 < 0.001)."""
+        turtle = (
+            _MF_PFX
+            + _MF_COND_WRAP.format(bnd="0.001")
+            + "<urn:t:fn> a mf:mflogistic ;\n"
+            "    mf:mfinput <urn:t:inp> .\n"
+            "<urn:t:inp> rdf:value \"-10\"^^xsd:decimal .\n"
+        )
+        result = evaluate_turtle_conditions(turtle)
+        assert result["intentHandlingState"] == "Degraded"
+
+    def test_horizontal_shift_x0(self):
+        """x0=5: logistic at x=5 = 0.5; x=5 with x0=5 → midpoint → 0.5 ≥ 0.4 → Fulfilled."""
+        turtle = (
+            _MF_PFX
+            + _MF_COND_WRAP.format(bnd="0.4")
+            + "<urn:t:fn> a mf:mflogistic ;\n"
+            "    mf:mfinput <urn:t:inp> ;\n"
+            "    mf:mfx0 <urn:t:x0> .\n"
+            "<urn:t:inp> rdf:value \"5\"^^xsd:decimal .\n"
+            "<urn:t:x0>  rdf:value \"5\"^^xsd:decimal .\n"
+        )
+        result = evaluate_turtle_conditions(turtle)
+        assert result["intentHandlingState"] == "Fulfilled"
+
+    def test_missing_input_skips_computation(self):
+        """No mf:mfinput → rdf:value not set → quantity eval fails (missing value)."""
+        turtle = (
+            _MF_PFX
+            + _MF_COND_WRAP.format(bnd="0.4")
+            + "<urn:t:fn> a mf:mflogistic .\n"
+        )
+        result = evaluate_turtle_conditions(turtle)
+        assert result["intentHandlingState"] == "Degraded"
+
+
+class TestMfPoly:
+    """mf:mfpoly — l * sum(coeff_i * x^i) + c"""
+
+    def test_constant_polynomial(self):
+        """Single coefficient [5], l=1, c=0 → f(x) = 5; bound 4 → Fulfilled."""
+        turtle = (
+            _MF_PFX
+            + _MF_COND_WRAP.format(bnd="4")
+            + "<urn:t:fn> a mf:mfpoly ;\n"
+            "    mf:mfinput        <urn:t:inp> ;\n"
+            "    mf:mfcoefficients ( <urn:t:c0> ) .\n"
+            "<urn:t:inp> rdf:value \"3\"^^xsd:decimal .\n"
+            "<urn:t:c0>  rdf:value \"5\"^^xsd:decimal .\n"
+        )
+        result = evaluate_turtle_conditions(turtle)
+        assert result["intentHandlingState"] == "Fulfilled"
+        assert abs(result["conditions"][0]["observed"] - 5.0) < 1e-6
+
+    def test_linear_polynomial(self):
+        """Coefficients [1, 2] → f(x) = 1 + 2*3 = 7; bound 6 → Fulfilled."""
+        turtle = (
+            _MF_PFX
+            + _MF_COND_WRAP.format(bnd="6")
+            + "<urn:t:fn> a mf:mfpoly ;\n"
+            "    mf:mfinput        <urn:t:inp> ;\n"
+            "    mf:mfcoefficients ( <urn:t:c0> <urn:t:c1> ) .\n"
+            "<urn:t:inp> rdf:value \"3\"^^xsd:decimal .\n"
+            "<urn:t:c0>  rdf:value \"1\"^^xsd:decimal .\n"
+            "<urn:t:c1>  rdf:value \"2\"^^xsd:decimal .\n"
+        )
+        result = evaluate_turtle_conditions(turtle)
+        assert result["intentHandlingState"] == "Fulfilled"
+        assert abs(result["conditions"][0]["observed"] - 7.0) < 1e-6
+
+    def test_quadratic_polynomial(self):
+        """[0, 0, 1] → f(x) = x² ; x=3 → 9; bound 8 → Fulfilled."""
+        turtle = (
+            _MF_PFX
+            + _MF_COND_WRAP.format(bnd="8")
+            + "<urn:t:fn> a mf:mfpoly ;\n"
+            "    mf:mfinput        <urn:t:inp> ;\n"
+            "    mf:mfcoefficients ( <urn:t:c0> <urn:t:c1> <urn:t:c2> ) .\n"
+            "<urn:t:inp> rdf:value \"3\"^^xsd:decimal .\n"
+            "<urn:t:c0>  rdf:value \"0\"^^xsd:decimal .\n"
+            "<urn:t:c1>  rdf:value \"0\"^^xsd:decimal .\n"
+            "<urn:t:c2>  rdf:value \"1\"^^xsd:decimal .\n"
+        )
+        result = evaluate_turtle_conditions(turtle)
+        assert result["intentHandlingState"] == "Fulfilled"
+        assert abs(result["conditions"][0]["observed"] - 9.0) < 1e-6
+
+    def test_stretch_and_offset(self):
+        """[1] (constant 1), l=3, c=2 → f = 3*1 + 2 = 5; bound 4 → Fulfilled."""
+        turtle = (
+            _MF_PFX
+            + _MF_COND_WRAP.format(bnd="4")
+            + "<urn:t:fn> a mf:mfpoly ;\n"
+            "    mf:mfinput        <urn:t:inp> ;\n"
+            "    mf:mfcoefficients ( <urn:t:c0> ) ;\n"
+            "    mf:mfl <urn:t:l> ;\n"
+            "    mf:mfc <urn:t:c> .\n"
+            "<urn:t:inp> rdf:value \"0\"^^xsd:decimal .\n"
+            "<urn:t:c0>  rdf:value \"1\"^^xsd:decimal .\n"
+            "<urn:t:l>   rdf:value \"3\"^^xsd:decimal .\n"
+            "<urn:t:c>   rdf:value \"2\"^^xsd:decimal .\n"
+        )
+        result = evaluate_turtle_conditions(turtle)
+        assert result["intentHandlingState"] == "Fulfilled"
+        assert abs(result["conditions"][0]["observed"] - 5.0) < 1e-6
+
+    def test_poly_below_bound_degrades(self):
+        """f(x)=2 with bound 3 → Degraded."""
+        turtle = (
+            _MF_PFX
+            + _MF_COND_WRAP.format(bnd="3")
+            + "<urn:t:fn> a mf:mfpoly ;\n"
+            "    mf:mfinput        <urn:t:inp> ;\n"
+            "    mf:mfcoefficients ( <urn:t:c0> ) .\n"
+            "<urn:t:inp> rdf:value \"0\"^^xsd:decimal .\n"
+            "<urn:t:c0>  rdf:value \"2\"^^xsd:decimal .\n"
+        )
+        result = evaluate_turtle_conditions(turtle)
+        assert result["intentHandlingState"] == "Degraded"
+
+    def test_missing_coefficients_skips(self):
+        """No mf:mfcoefficients → rdf:value not set → Degraded."""
+        turtle = (
+            _MF_PFX
+            + _MF_COND_WRAP.format(bnd="4")
+            + "<urn:t:fn> a mf:mfpoly ;\n"
+            "    mf:mfinput <urn:t:inp> .\n"
+            "<urn:t:inp> rdf:value \"3\"^^xsd:decimal .\n"
+        )
+        result = evaluate_turtle_conditions(turtle)
+        assert result["intentHandlingState"] == "Degraded"
+
+
+class TestMfMapping:
+    """mf:mfmapping — piecewise lookup: map input value to result."""
+
+    def test_matching_entry_returns_result(self):
+        """Input 2 maps to result 10; bound 9 → Fulfilled."""
+        turtle = (
+            _MF_PFX
+            + _MF_COND_WRAP.format(bnd="9")
+            + "<urn:t:fn> a mf:mfmapping ;\n"
+            "    mf:mfinput <urn:t:inp> ;\n"
+            "    mf:mfmap   ( ( <urn:t:r1> <urn:t:v1> ) ( <urn:t:r2> <urn:t:v2> ) ) .\n"
+            "<urn:t:inp> rdf:value \"2\"^^xsd:decimal .\n"
+            "<urn:t:r1>  rdf:value \"100\"^^xsd:decimal .\n"
+            "<urn:t:v1>  rdf:value \"1\"^^xsd:decimal .\n"
+            "<urn:t:r2>  rdf:value \"10\"^^xsd:decimal .\n"
+            "<urn:t:v2>  rdf:value \"2\"^^xsd:decimal .\n"
+        )
+        result = evaluate_turtle_conditions(turtle)
+        assert result["intentHandlingState"] == "Fulfilled"
+        assert abs(result["conditions"][0]["observed"] - 10.0) < 1e-6
+
+    def test_no_matching_entry_skips(self):
+        """Input 5 not in any mapping entry → rdf:value not set → Degraded."""
+        turtle = (
+            _MF_PFX
+            + _MF_COND_WRAP.format(bnd="9")
+            + "<urn:t:fn> a mf:mfmapping ;\n"
+            "    mf:mfinput <urn:t:inp> ;\n"
+            "    mf:mfmap   ( ( <urn:t:r1> <urn:t:v1> ) ) .\n"
+            "<urn:t:inp> rdf:value \"5\"^^xsd:decimal .\n"
+            "<urn:t:r1>  rdf:value \"10\"^^xsd:decimal .\n"
+            "<urn:t:v1>  rdf:value \"1\"^^xsd:decimal .\n"
+        )
+        result = evaluate_turtle_conditions(turtle)
+        assert result["intentHandlingState"] == "Degraded"
+
+    def test_multiple_sources_per_entry(self):
+        """Entry [result=7, src=1, src=2, src=3]: input 3 matches → Fulfilled."""
+        turtle = (
+            _MF_PFX
+            + _MF_COND_WRAP.format(bnd="6")
+            + "<urn:t:fn> a mf:mfmapping ;\n"
+            "    mf:mfinput <urn:t:inp> ;\n"
+            "    mf:mfmap   ( ( <urn:t:res> <urn:t:s1> <urn:t:s2> <urn:t:s3> ) ) .\n"
+            "<urn:t:inp> rdf:value \"3\"^^xsd:decimal .\n"
+            "<urn:t:res> rdf:value \"7\"^^xsd:decimal .\n"
+            "<urn:t:s1>  rdf:value \"1\"^^xsd:decimal .\n"
+            "<urn:t:s2>  rdf:value \"2\"^^xsd:decimal .\n"
+            "<urn:t:s3>  rdf:value \"3\"^^xsd:decimal .\n"
+        )
+        result = evaluate_turtle_conditions(turtle)
+        assert result["intentHandlingState"] == "Fulfilled"
+        assert abs(result["conditions"][0]["observed"] - 7.0) < 1e-6
+
+    def test_first_matching_entry_wins(self):
+        """Two entries both match input 1 (impossible in practice but logic uses first)."""
+        turtle = (
+            _MF_PFX
+            + _MF_COND_WRAP.format(bnd="4")
+            + "<urn:t:fn> a mf:mfmapping ;\n"
+            "    mf:mfinput <urn:t:inp> ;\n"
+            "    mf:mfmap   ( ( <urn:t:r1> <urn:t:v1> ) ( <urn:t:r2> <urn:t:v1> ) ) .\n"
+            "<urn:t:inp> rdf:value \"1\"^^xsd:decimal .\n"
+            "<urn:t:r1>  rdf:value \"5\"^^xsd:decimal .\n"
+            "<urn:t:r2>  rdf:value \"99\"^^xsd:decimal .\n"
+            "<urn:t:v1>  rdf:value \"1\"^^xsd:decimal .\n"
+        )
+        result = evaluate_turtle_conditions(turtle)
+        assert result["intentHandlingState"] == "Fulfilled"
+        assert abs(result["conditions"][0]["observed"] - 5.0) < 1e-6
+
+    def test_missing_map_skips(self):
+        """No mf:mfmap → rdf:value not set → Degraded."""
+        turtle = (
+            _MF_PFX
+            + _MF_COND_WRAP.format(bnd="9")
+            + "<urn:t:fn> a mf:mfmapping ;\n"
+            "    mf:mfinput <urn:t:inp> .\n"
+            "<urn:t:inp> rdf:value \"2\"^^xsd:decimal .\n"
+        )
+        result = evaluate_turtle_conditions(turtle)
+        assert result["intentHandlingState"] == "Degraded"
+
+
 # ── dispatcher ────────────────────────────────────────────────────────────────
 
 

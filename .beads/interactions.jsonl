@@ -22,3 +22,4 @@
 {"id":"int-ea0e3f17","kind":"field_change","created_at":"2026-06-04T10:25:56.320560679Z","actor":"Brad","issue_id":"BBF_921-983","extra":{"field":"status","new_value":"closed","old_value":"in_progress","reason":"Closed"}}
 {"id":"int-36a6a4e7","kind":"field_change","created_at":"2026-06-04T10:43:00.570981308Z","actor":"Brad","issue_id":"BBF_921-ay8","extra":{"field":"status","new_value":"closed","old_value":"in_progress","reason":"Closed"}}
 {"id":"int-e418f1ff","kind":"field_change","created_at":"2026-06-04T10:52:09.530397564Z","actor":"Brad","issue_id":"BBF_921-buu","extra":{"field":"status","new_value":"closed","old_value":"in_progress","reason":"Closed"}}
+{"id":"int-1bc206e7","kind":"field_change","created_at":"2026-06-04T11:00:44.17054435Z","actor":"Brad","issue_id":"BBF_921-7re","extra":{"field":"status","new_value":"closed","old_value":"in_progress","reason":"Closed"}}

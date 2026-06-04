@@ -84,6 +84,14 @@ IntentSpecification evaluation (tmf_insp_eval rules Python port):
                               in the rdf:rest list appears as a predicate on the
                               intent element given in rdf:first.
 
+Math function pre-processing (tmf_mathfn_eval.rules Python port):
+  _compute_math_functions runs after metric resolution; it finds mf:mflogistic,
+  mf:mfpoly, and mf:mfmapping nodes and materialises their output as rdf:value
+  so downstream quantity evaluators can use the computed result as an operand.
+  mf:mflogistic  — L / (1 + exp(-k*(x-x0))) + c
+  mf:mfpoly      — l * sum(coeff_i * x^i) + c
+  mf:mfmapping   — piecewise lookup: returns result whose source list contains x
+
 Metric resolution patterns (replaces Jena tmf_metrics_eval.rules):
   A) rdf:first → <metric URI>       — direct ref; resolved via met:Observation
   B) rdf:first → met:metlastValue   — latest observation for linked metric
@@ -92,12 +100,13 @@ Metric resolution patterns (replaces Jena tmf_metrics_eval.rules):
 from __future__ import annotations
 
 import logging
+import math
 from decimal import Decimal, InvalidOperation
 from operator import ge, gt, le, lt, eq
 from typing import Callable
 
 import rdflib
-from rdflib.namespace import RDF, RDFS
+from rdflib.namespace import RDF, RDFS, XSD
 
 from src.graph.nodes import intent_graph_uri, intent_node
 from src.graph.repositories.base_repository import PREFIXES
@@ -115,6 +124,7 @@ _IV   = rdflib.Namespace("http://tio.models.tmforum.org/tio/v3.6.0/IntentValidit
 _IG   = rdflib.Namespace("http://tio.models.tmforum.org/tio/v3.6.0/IntentGuaranteeOntology/")
 _IMO  = rdflib.Namespace("http://tio.models.tmforum.org/tio/v3.6.0/IntentManagementOntology/")
 _INSP = rdflib.Namespace("http://tio.models.tmforum.org/tio/v3.6.0/IntentSpecification/")
+_MF   = rdflib.Namespace("http://tio.models.tmforum.org/tio/v3.6.0/MathFunctions/")
 
 # (rdf_type, comparator, display_symbol) — two-argument quantity pattern
 _TWO_ARG_OPS: list[tuple[rdflib.URIRef, object, str]] = [
@@ -145,6 +155,126 @@ WHERE {{
     }}
 }}
 """
+
+# ── Math function pre-processing (tmf_mathfn_eval) ───────────────────────────
+
+def _rdf_decimal(g: rdflib.Graph, node: rdflib.term.Node) -> Decimal | None:
+    """
+    Extract a Decimal from a graph node.
+    Handles direct Literals and nodes that carry rdf:value.
+    Returns None on missing/non-numeric data.
+    """
+    if node is None:
+        return None
+    if isinstance(node, rdflib.Literal):
+        try:
+            return Decimal(str(node))
+        except InvalidOperation:
+            return None
+    val = g.value(node, RDF.value)
+    if val is None:
+        return None
+    try:
+        return Decimal(str(val))
+    except InvalidOperation:
+        return None
+
+
+def _mf_param(
+    g: rdflib.Graph,
+    fn: rdflib.term.Node,
+    prop: rdflib.URIRef,
+    default: Decimal,
+) -> Decimal:
+    """Read a numeric mf parameter, falling back to default when absent."""
+    v = _rdf_decimal(g, g.value(fn, prop))
+    return v if v is not None else default
+
+
+def _compute_math_functions(g: rdflib.Graph) -> None:
+    """
+    Compute mf:mflogistic, mf:mfpoly, and mf:mfmapping function nodes and
+    materialise their output as rdf:value so that downstream quantity evaluators
+    (which read rdf:value from rdf:first operand nodes) can compare the result.
+
+    Must run after _resolve_metric_refs so that metric-sourced inputs are
+    already resolved before the math is applied.
+    """
+    # ── mf:mflogistic: L / (1 + exp(-k*(x-x0))) + c ──────────────────────────
+    for fn in list(g.subjects(RDF.type, _MF.mflogistic)):
+        if g.value(fn, RDF.value) is not None:
+            continue
+        x = _rdf_decimal(g, g.value(fn, _MF.mfinput))
+        if x is None:
+            continue
+        k  = _mf_param(g, fn, _MF.mfk,  Decimal("1"))
+        l  = _mf_param(g, fn, _MF.mfl,  Decimal("1"))
+        c  = _mf_param(g, fn, _MF.mfc,  Decimal("0"))
+        x0 = _mf_param(g, fn, _MF.mfx0, Decimal("0"))
+        try:
+            exp_val = Decimal(str(math.exp(float(-k * (x - x0)))))
+            result = l / (Decimal("1") + exp_val) + c
+        except (ZeroDivisionError, OverflowError, InvalidOperation):
+            continue
+        g.set((fn, RDF.value, rdflib.Literal(result, datatype=XSD.decimal)))
+
+    # ── mf:mfpoly: l * (c0 + c1*x + c2*x² + ...) + c ────────────────────────
+    for fn in list(g.subjects(RDF.type, _MF.mfpoly)):
+        if g.value(fn, RDF.value) is not None:
+            continue
+        x = _rdf_decimal(g, g.value(fn, _MF.mfinput))
+        if x is None:
+            continue
+        coeff_head = g.value(fn, _MF.mfcoefficients)
+        if coeff_head is None:
+            continue
+        coeffs: list[Decimal] = []
+        for item in _iter_rdf_list(g, coeff_head):
+            v = _rdf_decimal(g, item)
+            coeffs.append(v if v is not None else Decimal("0"))
+        if not coeffs:
+            continue
+        l = _mf_param(g, fn, _MF.mfl, Decimal("1"))
+        c = _mf_param(g, fn, _MF.mfc, Decimal("0"))
+        try:
+            # Avoid Decimal("0") ** 0 which raises InvalidOperation; i=0 term is always coeff.
+            poly_val: Decimal = Decimal("0")
+            for i, coeff in enumerate(coeffs):
+                poly_val += coeff if i == 0 else coeff * (x ** i)
+            result = l * poly_val + c
+        except (InvalidOperation, OverflowError):
+            continue
+        g.set((fn, RDF.value, rdflib.Literal(result, datatype=XSD.decimal)))
+
+    # ── mf:mfmapping: piecewise lookup ───────────────────────────────────────
+    for fn in list(g.subjects(RDF.type, _MF.mfmapping)):
+        if g.value(fn, RDF.value) is not None:
+            continue
+        input_node = g.value(fn, _MF.mfinput)
+        if input_node is None:
+            continue
+        map_node = g.value(fn, _MF.mfmap)
+        if map_node is None:
+            continue
+        input_dec = _rdf_decimal(g, input_node)
+        for entry in _iter_rdf_list(g, map_node):
+            items = list(_iter_rdf_list(g, entry))
+            if len(items) < 2:
+                continue
+            result_node, *src_nodes = items
+            matched = False
+            for src in src_nodes:
+                src_dec = _rdf_decimal(g, src)
+                if src_dec is not None and input_dec is not None and src_dec == input_dec:
+                    matched = True
+                elif src == input_node:
+                    matched = True
+            if matched:
+                result_val = _rdf_decimal(g, result_node)
+                if result_val is not None:
+                    g.set((fn, RDF.value, rdflib.Literal(result_val, datatype=XSD.decimal)))
+                break
+
 
 # ── Metric resolution ─────────────────────────────────────────────────────────
 
@@ -921,6 +1051,7 @@ def evaluate_turtle_conditions(turtle_str: str) -> dict:
         return {"intentHandlingState": "Degraded", "reason": f"Turtle parse error: {exc}", "conditions": []}
 
     _resolve_metric_refs(g)
+    _compute_math_functions(g)
     _resolve_validity_chains(g)
     _derive_guarantee_states(g)
 
