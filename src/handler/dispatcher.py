@@ -19,6 +19,7 @@ from src.graph.repositories.hub_repository import HubRepository
 from src.graph.repositories.intent_report_repository import IntentReportRepository
 from src.graph.store import FusekiClient
 from src.handler.evaluator import evaluate_intent
+from src.handler.state_writer import write_handler_state
 from src.services.notification_service import EventType, NotificationService
 
 logger = logging.getLogger(__name__)
@@ -40,6 +41,10 @@ async def dispatch_evaluation(
     """
     try:
         result = await evaluate_intent(intent_id, client)
+
+        # Write working-memory facts before the IntentReport so the OODA loop
+        # always has current state even if the report write subsequently fails.
+        await write_handler_state(intent_id, result, client)
 
         report_id = str(uuid.uuid4())
         now = datetime.now(timezone.utc).isoformat()

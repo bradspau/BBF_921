@@ -34,6 +34,16 @@ def eval_graph_uri(intent_id: str, run_id: str) -> URIRef:
     return URIRef(f"{_BASE}/eval/{intent_id}/{run_id}")
 
 
+def handler_state_graph_uri(intent_id: str) -> URIRef:
+    """Named graph URI for the intent handler's OODA working memory."""
+    return URIRef(f"{_BASE}/intents/{intent_id}/handlerState")
+
+
+def handler_state_condition_uri(intent_id: str, index: int) -> URIRef:
+    """URI for a single condition result node within the handler state graph."""
+    return URIRef(f"{_BASE}/intents/{intent_id}/handlerState/condition/{index}")
+
+
 # Resource node URIs (same as named graph URIs — each resource is its own graph subject)
 def intent_node(intent_id: str) -> URIRef:
     return intent_graph_uri(intent_id)
