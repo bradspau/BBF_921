@@ -1,6 +1,6 @@
 # TMF921 Intent Management API v5.0.0
 
-**Stack:** Python 3.12 + FastAPI + Apache Jena Fuseki/TDB2 as the authoritative RDF graph store, accessed over SPARQL 1.1 Query/Update/Graph Store Protocol, with a clearly defined reasoning/materialisation strategy.
+**Stack:** Python 3.12 + FastAPI + Apache Jena Fuseki/TDB2 as the authoritative RDF graph store (SPARQL 1.1 / Graph Store Protocol). TIO quantity reasoning runs in Python via RDFLib (`src/handler/evaluator.py`) — Fuseki is storage only.
 **Models:** Pre-generated → `src/api/schemas/generated.py` — import only, never rewrite
 **OAS:** `docs/spec/TMF921_Intent_Management_v5.0.0_oas.yaml`
 **Repo:** [FILL: GitHub URL + branch]
@@ -8,10 +8,16 @@
 ## Commands
 - Generate models: `make models`
 - Run tests: `.venv/bin/pytest tests/ -v --cov=src --cov-fail-under=80`
-- Start dev server: `uvicorn src.main:app --reload`
-- Lint: `ruff check src/`
-- Seed data: `python seed_data/seed_intents.py`
+- Run single test file: `.venv/bin/pytest tests/unit/test_evaluator.py -v`
+- Start dev server: `.venv/bin/uvicorn src.main:app --reload`
+- Lint: `ruff check src/` / `ruff check src/ --fix` (auto-fix)
+- Seed data: `.venv/bin/python seed_data/seed_intents.py`
 - Docker (requires sudo on this machine): `sudo docker compose up --build`
+
+## Handler Layer (`src/handler/`)
+- `evaluator.py` — `evaluate_turtle_conditions(turtle)` → `{intentHandlingState, reason, conditions[]}`
+- `state_writer.py` — writes per-condition facts to `intents/{uuid}/handlerState` graph (OODA working memory)
+- `dispatcher.py` — background task: evaluate → write handlerState → create IntentReport → notify
 
 ## Rules
 - Read the listed docs/ file before writing code for each phase
@@ -70,6 +76,7 @@
 - `evaluate_turtle_conditions(turtle)` returns `{intentHandlingState, reason, conditions[]}` — `conditions` list has per-condition `{type, operator, observed, bound, passed}` detail for the OODA loop
 - `gsp_put(graph_uri, turtle)` preferred over SPARQL DROP+INSERT for named graph replacement — atomic, one HTTP call
 - TIO namespace authority: `http://tio.models.tmforum.org/tio/v3.6.0/{Module}/` — canonical prefixes in `ontology/jena-rules/tio_all.rules`; all seed/ontology files must use `http://` (not `https://`) and include `/tio/v3.6.0/`
+- OODA Decide step queries failed conditions: `SELECT ?type ?observed ?bound WHERE { GRAPH <…/handlerState> { <intent> imo:hasConditionResult ?c . ?c imo:conditionPassed "false"^^xsd:boolean ; a ?type ; imo:observedValue ?observed ; imo:boundValue ?bound } }`
 
 ## Python/RDFLib Testing Gotchas
 - `Decimal("NaN")` does NOT raise `InvalidOperation` — use `"not-a-number"` string in tests targeting the non-numeric error path
