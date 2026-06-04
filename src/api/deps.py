@@ -35,3 +35,11 @@ def get_intent_spec_service() -> IntentSpecService:
 def get_hub_repo() -> HubRepository:
     client = get_client()
     return HubRepository(client)
+
+
+def get_fuseki_client():
+    return get_client()
+
+
+def get_intent_report_repo() -> IntentReportRepository:
+    return IntentReportRepository(get_client())

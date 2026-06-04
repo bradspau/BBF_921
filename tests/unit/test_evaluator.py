@@ -116,6 +116,14 @@ _SMALLER_TURTLE = """\
 """
 
 
+_OBS_GRAPH_URI = f"http://tmforum.org/api/v5/intents/{INTENT_ID}/observations"
+
+
+def _mock_no_observations():
+    """Mock the observation graph GSP GET to return 404 (no observations yet)."""
+    respx.get(f"{FUSEKI}/{DATASET}/data").mock(return_value=httpx.Response(404))
+
+
 class TestEvaluateIntentTurtleExpression:
     @respx.mock
     async def test_conditions_fulfilled_when_all_pass(self):
@@ -124,6 +132,7 @@ class TestEvaluateIntentTurtleExpression:
         respx.post(f"{FUSEKI}/{DATASET}/sparql").mock(
             return_value=httpx.Response(200, json=_sparql_bindings(_turtle_expr_row(turtle)))
         )
+        _mock_no_observations()
         async with FusekiClient(FUSEKI, DATASET) as client:
             result = await evaluate_intent(INTENT_ID, client)
         assert result["intentHandlingState"] == "Fulfilled"
@@ -136,6 +145,7 @@ class TestEvaluateIntentTurtleExpression:
         respx.post(f"{FUSEKI}/{DATASET}/sparql").mock(
             return_value=httpx.Response(200, json=_sparql_bindings(_turtle_expr_row(turtle)))
         )
+        _mock_no_observations()
         async with FusekiClient(FUSEKI, DATASET) as client:
             result = await evaluate_intent(INTENT_ID, client)
         assert result["intentHandlingState"] == "Degraded"
@@ -148,6 +158,7 @@ class TestEvaluateIntentTurtleExpression:
         respx.post(f"{FUSEKI}/{DATASET}/sparql").mock(
             return_value=httpx.Response(200, json=_sparql_bindings(_turtle_expr_row(turtle)))
         )
+        _mock_no_observations()
         async with FusekiClient(FUSEKI, DATASET) as client:
             result = await evaluate_intent(INTENT_ID, client)
         assert result["intentHandlingState"] == "Degraded"
@@ -160,6 +171,7 @@ class TestEvaluateIntentTurtleExpression:
         respx.post(f"{FUSEKI}/{DATASET}/sparql").mock(
             return_value=httpx.Response(200, json=_sparql_bindings(_turtle_expr_row(turtle)))
         )
+        _mock_no_observations()
         async with FusekiClient(FUSEKI, DATASET) as client:
             result = await evaluate_intent(INTENT_ID, client)
         assert result["intentHandlingState"] == "Degraded"
@@ -172,6 +184,7 @@ class TestEvaluateIntentTurtleExpression:
         respx.post(f"{FUSEKI}/{DATASET}/sparql").mock(
             return_value=httpx.Response(200, json=_sparql_bindings(_turtle_expr_row(turtle)))
         )
+        _mock_no_observations()
         async with FusekiClient(FUSEKI, DATASET) as client:
             result = await evaluate_intent(INTENT_ID, client)
         assert result["intentHandlingState"] == "Fulfilled"
@@ -183,9 +196,40 @@ class TestEvaluateIntentTurtleExpression:
         respx.post(f"{FUSEKI}/{DATASET}/sparql").mock(
             return_value=httpx.Response(200, json=_sparql_bindings(_turtle_expr_row(turtle)))
         )
+        _mock_no_observations()
         async with FusekiClient(FUSEKI, DATASET) as client:
             result = await evaluate_intent(INTENT_ID, client)
         assert result["intentHandlingState"] == "Degraded"
+
+    @respx.mock
+    async def test_observations_merged_and_resolved(self):
+        """Metric ref in Turtle + matching observation in graph → Fulfilled."""
+        expr_turtle = """\
+@prefix quan: <http://tio.models.tmforum.org/tio/v3.6.0/QuantityOntology/> .
+@prefix rdf:  <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix xsd:  <http://www.w3.org/2001/XMLSchema#> .
+<urn:test:cond> a quan:quanatLeast ;
+    rdf:first <urn:test:dl_metric> ;
+    rdf:rest  [ rdf:first <urn:test:bound> ] .
+<urn:test:bound> rdf:value "100"^^xsd:decimal .
+"""
+        obs_turtle = """\
+@prefix met: <http://tio.models.tmforum.org/tio/v3.6.0/MetricsAndObservations/> .
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+<urn:test:obs1> a met:Observation ;
+    met:observedMetric <urn:test:dl_metric> ;
+    rdf:value "120"^^xsd:decimal ;
+    met:obtainedAt "2026-06-04T10:00:00Z"^^xsd:dateTime .
+"""
+        respx.post(f"{FUSEKI}/{DATASET}/sparql").mock(
+            return_value=httpx.Response(200, json=_sparql_bindings(_turtle_expr_row(expr_turtle)))
+        )
+        respx.get(f"{FUSEKI}/{DATASET}/data").mock(return_value=httpx.Response(200, text=obs_turtle))
+        async with FusekiClient(FUSEKI, DATASET) as client:
+            result = await evaluate_intent(INTENT_ID, client)
+        assert result["intentHandlingState"] == "Fulfilled"
+        assert result["conditions"][0]["observed"] == 120.0
 
 
 # ── evaluate_turtle_conditions — unit tests (no Fuseki) ───────────────────────
@@ -467,6 +511,159 @@ class TestEvaluateTurtleConditions:
         assert len(failed) == 1
         assert failed[0]["type"] == "quansmaller"
         assert failed[0]["observed"] == 30.0
+
+
+# ── metric resolution (tmf_metrics_eval.rules Python port) ───────────────────
+
+_MET_PREFIXES = """\
+@prefix quan: <http://tio.models.tmforum.org/tio/v3.6.0/QuantityOntology/> .
+@prefix met:  <http://tio.models.tmforum.org/tio/v3.6.0/MetricsAndObservations/> .
+@prefix rdf:  <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd:  <http://www.w3.org/2001/XMLSchema#> .
+"""
+
+
+class TestMetricResolution:
+    """Verify that met:Observation records resolve to rdf:value on metric nodes."""
+
+    def test_pattern_a_direct_metric_ref_fulfilled(self):
+        """Pattern A: metric URI as rdf:first, observation in merged graph → Fulfilled."""
+        turtle = (
+            _MET_PREFIXES
+            + "<urn:test:cond> a quan:quanatLeast ;\n"
+            "    rdf:first <urn:test:metric> ;\n"
+            "    rdf:rest  [ rdf:first <urn:test:bound> ] .\n"
+            "<urn:test:bound> rdf:value \"100\"^^xsd:decimal .\n"
+            "<urn:test:obs> a met:Observation ;\n"
+            "    met:observedMetric <urn:test:metric> ;\n"
+            "    rdf:value \"120\"^^xsd:decimal ;\n"
+            "    met:obtainedAt \"2026-06-04T10:00:00Z\"^^xsd:dateTime .\n"
+        )
+        result = evaluate_turtle_conditions(turtle)
+        assert result["intentHandlingState"] == "Fulfilled"
+        assert result["conditions"][0]["observed"] == 120.0
+
+    def test_pattern_a_metric_below_bound_degraded(self):
+        """Pattern A: observed < bound → Degraded."""
+        turtle = (
+            _MET_PREFIXES
+            + "<urn:test:cond> a quan:quanatLeast ;\n"
+            "    rdf:first <urn:test:metric> ;\n"
+            "    rdf:rest  [ rdf:first <urn:test:bound> ] .\n"
+            "<urn:test:bound> rdf:value \"100\"^^xsd:decimal .\n"
+            "<urn:test:obs> a met:Observation ;\n"
+            "    met:observedMetric <urn:test:metric> ;\n"
+            "    rdf:value \"80\"^^xsd:decimal ;\n"
+            "    met:obtainedAt \"2026-06-04T10:00:00Z\"^^xsd:dateTime .\n"
+        )
+        result = evaluate_turtle_conditions(turtle)
+        assert result["intentHandlingState"] == "Degraded"
+        assert result["conditions"][0]["passed"] is False
+
+    def test_pattern_a_latest_observation_wins(self):
+        """Pattern A: when multiple observations exist, most recent is used."""
+        turtle = (
+            _MET_PREFIXES
+            + "<urn:test:cond> a quan:quanatLeast ;\n"
+            "    rdf:first <urn:test:metric> ;\n"
+            "    rdf:rest  [ rdf:first <urn:test:bound> ] .\n"
+            "<urn:test:bound> rdf:value \"100\"^^xsd:decimal .\n"
+            "<urn:test:obs_old> a met:Observation ;\n"
+            "    met:observedMetric <urn:test:metric> ;\n"
+            "    rdf:value \"80\"^^xsd:decimal ;\n"
+            "    met:obtainedAt \"2026-06-04T09:00:00Z\"^^xsd:dateTime .\n"
+            "<urn:test:obs_new> a met:Observation ;\n"
+            "    met:observedMetric <urn:test:metric> ;\n"
+            "    rdf:value \"120\"^^xsd:decimal ;\n"
+            "    met:obtainedAt \"2026-06-04T10:00:00Z\"^^xsd:dateTime .\n"
+        )
+        result = evaluate_turtle_conditions(turtle)
+        assert result["intentHandlingState"] == "Fulfilled"
+        assert result["conditions"][0]["observed"] == 120.0
+
+    def test_pattern_a_quansmaller_with_metric_ref(self):
+        """Pattern A works for quansmaller (latency < bound)."""
+        turtle = (
+            _MET_PREFIXES
+            + "<urn:test:cond> a quan:quansmaller ;\n"
+            "    rdf:first <urn:test:lat_metric> ;\n"
+            "    rdf:rest  [ rdf:first <urn:test:bound> ] .\n"
+            "<urn:test:bound> rdf:value \"25\"^^xsd:decimal .\n"
+            "<urn:test:obs> a met:Observation ;\n"
+            "    met:observedMetric <urn:test:lat_metric> ;\n"
+            "    rdf:value \"10\"^^xsd:decimal ;\n"
+            "    met:obtainedAt \"2026-06-04T10:00:00Z\"^^xsd:dateTime .\n"
+        )
+        result = evaluate_turtle_conditions(turtle)
+        assert result["intentHandlingState"] == "Fulfilled"
+
+    def test_pattern_a_no_observation_gives_missing_rdf_value(self):
+        """Pattern A: metric node with no observation → missing rdf:value error."""
+        turtle = (
+            _MET_PREFIXES
+            + "<urn:test:cond> a quan:quanatLeast ;\n"
+            "    rdf:first <urn:test:metric> ;\n"
+            "    rdf:rest  [ rdf:first <urn:test:bound> ] .\n"
+            "<urn:test:bound> rdf:value \"100\"^^xsd:decimal .\n"
+        )
+        result = evaluate_turtle_conditions(turtle)
+        assert result["intentHandlingState"] == "Degraded"
+        assert result["conditions"][0]["error"] == "missing rdf:value"
+
+    def test_pattern_b_metlastvalue_resolved(self):
+        """Pattern B: met:metlastValue function node resolved via observation."""
+        turtle = (
+            _MET_PREFIXES
+            + "<urn:test:cond> a quan:quanatLeast ;\n"
+            "    rdf:first <urn:test:fn> ;\n"
+            "    rdf:rest  [ rdf:first <urn:test:bound> ] .\n"
+            "<urn:test:bound> rdf:value \"100\"^^xsd:decimal .\n"
+            "<urn:test:fn> a met:metlastValue ;\n"
+            "    rdfs:member <urn:test:metric> .\n"
+            "<urn:test:obs> a met:Observation ;\n"
+            "    met:observedMetric <urn:test:metric> ;\n"
+            "    rdf:value \"110\"^^xsd:decimal ;\n"
+            "    met:obtainedAt \"2026-06-04T10:00:00Z\"^^xsd:dateTime .\n"
+        )
+        result = evaluate_turtle_conditions(turtle)
+        assert result["intentHandlingState"] == "Fulfilled"
+
+    def test_pattern_c_metobservedvalue_resolved(self):
+        """Pattern C: met:metobservedValue function node resolved from direct observation."""
+        turtle = (
+            _MET_PREFIXES
+            + "<urn:test:cond> a quan:quanatLeast ;\n"
+            "    rdf:first <urn:test:fn> ;\n"
+            "    rdf:rest  [ rdf:first <urn:test:bound> ] .\n"
+            "<urn:test:bound> rdf:value \"100\"^^xsd:decimal .\n"
+            "<urn:test:fn> a met:metobservedValue ;\n"
+            "    rdf:first <urn:test:obs> .\n"
+            "<urn:test:obs> a met:Observation ;\n"
+            "    rdf:value \"115\"^^xsd:decimal .\n"
+        )
+        result = evaluate_turtle_conditions(turtle)
+        assert result["intentHandlingState"] == "Fulfilled"
+
+    def test_pattern_a_quaninrange_with_metric_ref(self):
+        """Pattern A applies to quaninRange value node too."""
+        turtle = (
+            _MET_PREFIXES
+            + "<urn:test:cond> a quan:quaninRange ;\n"
+            "    rdf:first <urn:test:metric> ;\n"
+            "    rdf:rest  <urn:test:r1> .\n"
+            "<urn:test:r1> rdf:first <urn:test:lo> ; rdf:rest <urn:test:r2> .\n"
+            "<urn:test:r2> rdf:first <urn:test:hi> .\n"
+            "<urn:test:lo> rdf:value \"10\"^^xsd:decimal .\n"
+            "<urn:test:hi> rdf:value \"100\"^^xsd:decimal .\n"
+            "<urn:test:obs> a met:Observation ;\n"
+            "    met:observedMetric <urn:test:metric> ;\n"
+            "    rdf:value \"50\"^^xsd:decimal ;\n"
+            "    met:obtainedAt \"2026-06-04T10:00:00Z\"^^xsd:dateTime .\n"
+        )
+        result = evaluate_turtle_conditions(turtle)
+        assert result["intentHandlingState"] == "Fulfilled"
+        assert result["conditions"][0]["observed"] == 50.0
 
 
 # ── dispatcher ────────────────────────────────────────────────────────────────

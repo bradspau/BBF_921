@@ -9,7 +9,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, Response
 
 from src.api.error_handlers import register_handlers
-from src.api.routers import intent, intent_report, intent_spec, hub
+from src.api.routers import intent, intent_report, intent_spec, hub, observation
 from src.graph.schema_init import initialise_schema
 from src.graph.store import close_client, get_client, init_client
 
@@ -41,6 +41,7 @@ app.include_router(intent.router,        prefix=_BASE)
 app.include_router(intent_report.router, prefix=_BASE)
 app.include_router(intent_spec.router,   prefix=_BASE)
 app.include_router(hub.router,           prefix=_BASE)
+app.include_router(observation.router,   prefix=_BASE)
 
 
 @app.get("/health", tags=["health"])

@@ -44,6 +44,11 @@ def handler_state_condition_uri(intent_id: str, index: int) -> URIRef:
     return URIRef(f"{_BASE}/intents/{intent_id}/handlerState/condition/{index}")
 
 
+def observations_graph_uri(intent_id: str) -> URIRef:
+    """Named graph URI for metric observations for an intent."""
+    return URIRef(f"{_BASE}/intents/{intent_id}/observations")
+
+
 # Resource node URIs (same as named graph URIs — each resource is its own graph subject)
 def intent_node(intent_id: str) -> URIRef:
     return intent_graph_uri(intent_id)
