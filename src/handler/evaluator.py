@@ -66,6 +66,14 @@ Validity evaluation (tmf_validity_eval):
                       fail immediately (validityGate condition), regardless of the
                       condition's own value.
 
+Guarantee evaluation (tmf_guarantee_eval rules Python port):
+  Pre-processing: _derive_guarantee_states walks ig:GuaranteeReport nodes and
+                  materialises ig:state by matching ig:GuaranteeAccepted or
+                  ig:GuaranteeRejected events (linked via imo:eventIssuedFor and
+                  icm:about) before any condition is evaluated.
+  ig:GuaranteeReport — passes iff ig:state == ig:GuaranteeStateCompliant;
+                       fails if state is ig:GuaranteeStateDegraded or absent.
+
 Metric resolution patterns (replaces Jena tmf_metrics_eval.rules):
   A) rdf:first → <metric URI>       — direct ref; resolved via met:Observation
   B) rdf:first → met:metlastValue   — latest observation for linked metric
@@ -94,6 +102,8 @@ _LOG  = rdflib.Namespace("http://tio.models.tmforum.org/tio/v3.6.0/LogicalOperat
 _SET  = rdflib.Namespace("http://tio.models.tmforum.org/tio/v3.6.0/SetOperators/")
 _ICM  = rdflib.Namespace("http://tio.models.tmforum.org/tio/v3.6.0/IntentCommonModel/")
 _IV   = rdflib.Namespace("http://tio.models.tmforum.org/tio/v3.6.0/IntentValidityOntology/")
+_IG   = rdflib.Namespace("http://tio.models.tmforum.org/tio/v3.6.0/IntentGuaranteeOntology/")
+_IMO  = rdflib.Namespace("http://tio.models.tmforum.org/tio/v3.6.0/IntentManagementOntology/")
 
 # (rdf_type, comparator, display_symbol) — two-argument quantity pattern
 _TWO_ARG_OPS: list[tuple[rdflib.URIRef, object, str]] = [
@@ -215,6 +225,40 @@ def _resolve_validity_chains(g: rdflib.Graph) -> None:
             if existing != b:
                 g.set((x, _IV.ivisValid, b))
                 changed = True
+
+
+# ── Guarantee state pre-processing ───────────────────────────────────────────
+
+def _derive_guarantee_states(g: rdflib.Graph) -> None:
+    """
+    Apply tmf_guarantee_eval rules: materialise ig:state on ig:GuaranteeReport nodes.
+
+    igReportStateCompliant:
+      (?R ig:GuaranteeReport) + (?E ig:GuaranteeAccepted) +
+      (?E imo:eventIssuedFor ?I) + (?R icm:about ?I)
+      → (?R ig:state ig:GuaranteeStateCompliant)
+
+    igReportStateDegraded:
+      same pattern with ig:GuaranteeRejected → ig:GuaranteeStateDegraded
+
+    Nodes that already carry ig:state (set by the expression itself) are left
+    unchanged. Compliant takes precedence when both events are present.
+    """
+    for report in list(g.subjects(RDF.type, _IG.GuaranteeReport)):
+        if g.value(report, _IG.state) is not None:
+            continue
+        intent = g.value(report, _ICM.about)
+        if intent is None:
+            continue
+        for event in g.subjects(RDF.type, _IG.GuaranteeAccepted):
+            if (event, _IMO.eventIssuedFor, intent) in g:
+                g.set((report, _IG.state, _IG.GuaranteeStateCompliant))
+                break
+        if g.value(report, _IG.state) is None:
+            for event in g.subjects(RDF.type, _IG.GuaranteeRejected):
+                if (event, _IMO.eventIssuedFor, intent) in g:
+                    g.set((report, _IG.state, _IG.GuaranteeStateDegraded))
+                    break
 
 
 # ── RDF list iteration ────────────────────────────────────────────────────────
@@ -541,6 +585,21 @@ def _eval_validity_of(g: rdflib.Graph, node: rdflib.term.Node) -> tuple[bool, li
     return passed, [{"type": "validityOf", "member_count": len(members), "passed": passed}]
 
 
+# ── Guarantee report leaf evaluator (tmf_guarantee_eval) ─────────────────────
+
+def _eval_guarantee_report(g: rdflib.Graph, node: rdflib.term.Node) -> tuple[bool, list[dict]]:
+    """
+    ig:GuaranteeReport — passes if ig:state is ig:GuaranteeStateCompliant.
+    Fails if state is ig:GuaranteeStateDegraded or if no state was derived.
+    """
+    state = g.value(node, _IG.state)
+    if state == _IG.GuaranteeStateCompliant:
+        return True, [{"type": "GuaranteeReport", "state": "GuaranteeStateCompliant", "passed": True}]
+    if state == _IG.GuaranteeStateDegraded:
+        return False, [{"type": "GuaranteeReport", "state": "GuaranteeStateDegraded", "passed": False}]
+    return False, [{"type": "GuaranteeReport", "error": "no ig:state derived", "passed": False}]
+
+
 # ── Recursive tree evaluator ──────────────────────────────────────────────────
 
 def _eval_node(g: rdflib.Graph, node: rdflib.term.Node) -> tuple[bool, list[dict]]:
@@ -630,6 +689,10 @@ def _eval_node(g: rdflib.Graph, node: rdflib.term.Node) -> tuple[bool, list[dict
     if (node, RDF.type, _IV.ivvalidityOf) in g:
         return _eval_validity_of(g, node)
 
+    # ── Guarantee report ──────────────────────────────────────────────────────
+    if (node, RDF.type, _IG.GuaranteeReport) in g:
+        return _eval_guarantee_report(g, node)
+
     # ── Unknown/opaque — pass silently (no evaluable content) ────────────────
     return True, []
 
@@ -703,6 +766,7 @@ def _flat_scan(g: rdflib.Graph) -> list[dict]:
         _SET.setisMember, _SET.setintersectsWith, _SET.setincludedIn, _SET.setforAll,
         _ICM.DeliveryExpectation, _ICM.PropertyExpectation,
         _IV.ivvalidityOf,
+        _IG.GuaranteeReport,
     ):
         for node in g.subjects(RDF.type, rdf_type):
             if node in excluded or node in seen:
@@ -720,6 +784,7 @@ _SIMPLE_FAIL_TYPES = frozenset([
     "setIsMember", "setIntersectsWith", "setIncludedIn", "setForAll",
     "DeliveryExpectation", "PropertyExpectation",
     "validityOf", "validityGate",
+    "GuaranteeReport",
 ])
 
 
@@ -765,6 +830,7 @@ def evaluate_turtle_conditions(turtle_str: str) -> dict:
 
     _resolve_metric_refs(g)
     _resolve_validity_chains(g)
+    _derive_guarantee_states(g)
 
     roots = _find_evaluation_roots(g)
 

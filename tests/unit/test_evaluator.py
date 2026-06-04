@@ -1406,6 +1406,151 @@ class TestSetOpsFlatScan:
         assert any(c.get("passed") for c in result["conditions"])
 
 
+# ── Guarantee report evaluation (tmf_guarantee_eval.rules Python port) ───────
+
+_IG_PFX = """\
+@prefix ig:   <http://tio.models.tmforum.org/tio/v3.6.0/IntentGuaranteeOntology/> .
+@prefix icm:  <http://tio.models.tmforum.org/tio/v3.6.0/IntentCommonModel/> .
+@prefix imo:  <http://tio.models.tmforum.org/tio/v3.6.0/IntentManagementOntology/> .
+@prefix rdf:  <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+"""
+
+_IG_REPORT = (
+    "<urn:t:report> a ig:GuaranteeReport ;\n"
+    "    icm:about <urn:t:intent> .\n"
+)
+_IG_ACCEPTED = (
+    "<urn:t:event> a ig:GuaranteeAccepted ;\n"
+    "    imo:eventIssuedFor <urn:t:intent> .\n"
+)
+_IG_REJECTED = (
+    "<urn:t:event> a ig:GuaranteeRejected ;\n"
+    "    imo:eventIssuedFor <urn:t:intent> .\n"
+)
+
+
+class TestGuaranteeReport:
+    """ig:GuaranteeReport — state derivation from GuaranteeAccepted/Rejected events."""
+
+    def test_accepted_event_yields_compliant(self):
+        """GuaranteeAccepted event for the same intent → report state Compliant → Fulfilled."""
+        turtle = _IG_PFX + _IG_REPORT + _IG_ACCEPTED
+        result = evaluate_turtle_conditions(turtle)
+        assert result["intentHandlingState"] == "Fulfilled"
+        c = result["conditions"][0]
+        assert c["type"] == "GuaranteeReport"
+        assert c["state"] == "GuaranteeStateCompliant"
+        assert c["passed"] is True
+
+    def test_rejected_event_yields_degraded(self):
+        """GuaranteeRejected event for the same intent → report state Degraded → Degraded."""
+        turtle = _IG_PFX + _IG_REPORT + _IG_REJECTED
+        result = evaluate_turtle_conditions(turtle)
+        assert result["intentHandlingState"] == "Degraded"
+        c = result["conditions"][0]
+        assert c["type"] == "GuaranteeReport"
+        assert c["state"] == "GuaranteeStateDegraded"
+        assert c["passed"] is False
+
+    def test_no_matching_event_degrades(self):
+        """GuaranteeReport with no matching event → no ig:state derived → Degraded."""
+        turtle = _IG_PFX + _IG_REPORT  # no event triples
+        result = evaluate_turtle_conditions(turtle)
+        assert result["intentHandlingState"] == "Degraded"
+        c = result["conditions"][0]
+        assert c["type"] == "GuaranteeReport"
+        assert "error" in c
+        assert c["passed"] is False
+
+    def test_event_for_different_intent_ignored(self):
+        """GuaranteeAccepted issued for a different intent URI → no state derived → Degraded."""
+        turtle = (
+            _IG_PFX
+            + _IG_REPORT
+            + "<urn:t:event> a ig:GuaranteeAccepted ;\n"
+            "    imo:eventIssuedFor <urn:t:other-intent> .\n"
+        )
+        result = evaluate_turtle_conditions(turtle)
+        assert result["intentHandlingState"] == "Degraded"
+        assert result["conditions"][0]["type"] == "GuaranteeReport"
+
+    def test_state_already_set_compliant_is_respected(self):
+        """ig:state asserted directly in the expression → _derive skips, evaluator reads it."""
+        turtle = (
+            _IG_PFX
+            + "<urn:t:report> a ig:GuaranteeReport ;\n"
+            "    icm:about <urn:t:intent> ;\n"
+            "    ig:state ig:GuaranteeStateCompliant .\n"
+        )
+        result = evaluate_turtle_conditions(turtle)
+        assert result["intentHandlingState"] == "Fulfilled"
+        assert result["conditions"][0]["state"] == "GuaranteeStateCompliant"
+
+    def test_state_already_set_degraded_is_respected(self):
+        """ig:state asserted as Degraded directly → Degraded even with no event."""
+        turtle = (
+            _IG_PFX
+            + "<urn:t:report> a ig:GuaranteeReport ;\n"
+            "    icm:about <urn:t:intent> ;\n"
+            "    ig:state ig:GuaranteeStateDegraded .\n"
+        )
+        result = evaluate_turtle_conditions(turtle)
+        assert result["intentHandlingState"] == "Degraded"
+        assert result["conditions"][0]["state"] == "GuaranteeStateDegraded"
+
+    def test_accepted_takes_precedence_over_rejected(self):
+        """When both events present, Compliant takes precedence over Degraded."""
+        turtle = _IG_PFX + _IG_REPORT + _IG_ACCEPTED + (
+            "<urn:t:event2> a ig:GuaranteeRejected ;\n"
+            "    imo:eventIssuedFor <urn:t:intent> .\n"
+        )
+        result = evaluate_turtle_conditions(turtle)
+        assert result["intentHandlingState"] == "Fulfilled"
+        assert result["conditions"][0]["state"] == "GuaranteeStateCompliant"
+
+    def test_guarantee_report_inside_allof(self):
+        """GuaranteeReport node as child of log:allOf combinator."""
+        turtle = (
+            _IG_PFX
+            + "<urn:t:root> <http://tio.models.tmforum.org/tio/v3.6.0/LogicalOperators/allOf>"
+            " ( <urn:t:report> ) .\n"
+            + _IG_REPORT
+            + _IG_ACCEPTED
+        )
+        result = evaluate_turtle_conditions(turtle)
+        assert result["intentHandlingState"] == "Fulfilled"
+        assert result["conditions"][0]["type"] == "GuaranteeReport"
+
+    def test_two_reports_both_compliant(self):
+        """Two guarantee reports, both with accepted events → Fulfilled."""
+        turtle = (
+            _IG_PFX
+            + "<urn:t:r1> a ig:GuaranteeReport ; icm:about <urn:t:i1> .\n"
+            "<urn:t:r2> a ig:GuaranteeReport ; icm:about <urn:t:i2> .\n"
+            "<urn:t:e1> a ig:GuaranteeAccepted ; imo:eventIssuedFor <urn:t:i1> .\n"
+            "<urn:t:e2> a ig:GuaranteeAccepted ; imo:eventIssuedFor <urn:t:i2> .\n"
+        )
+        result = evaluate_turtle_conditions(turtle)
+        assert result["intentHandlingState"] == "Fulfilled"
+        assert all(c["passed"] for c in result["conditions"])
+
+    def test_two_reports_one_degraded(self):
+        """Two reports: one compliant, one rejected → overall Degraded."""
+        turtle = (
+            _IG_PFX
+            + "<urn:t:r1> a ig:GuaranteeReport ; icm:about <urn:t:i1> .\n"
+            "<urn:t:r2> a ig:GuaranteeReport ; icm:about <urn:t:i2> .\n"
+            "<urn:t:e1> a ig:GuaranteeAccepted ; imo:eventIssuedFor <urn:t:i1> .\n"
+            "<urn:t:e2> a ig:GuaranteeRejected ; imo:eventIssuedFor <urn:t:i2> .\n"
+        )
+        result = evaluate_turtle_conditions(turtle)
+        assert result["intentHandlingState"] == "Degraded"
+        passed = [c["passed"] for c in result["conditions"]]
+        assert True in passed
+        assert False in passed
+
+
 # ── dispatcher ────────────────────────────────────────────────────────────────
 
 
