@@ -37,6 +37,17 @@ Quantity operators supported (TIO QuantityOntology v3.6.0):
   quan:quanexactly  — observed == bound
   quan:quaninRange  — lower <= observed <= upper
 
+Set operators supported (TIO SetOperators v3.6.0):
+  set:setisMember      — true if resource (rdf:first) is a member of ANY container in
+                         rdf:rest.  Containers listed via rdfs:member or RDF list.
+  set:setintersectsWith — true if C1 and C2 share at least one rdfs:member.
+                         Args: (C1, C2) as rdf:first / rdf:rest/rdf:first.
+  set:setincludedIn    — true if every member of C1 is also in each remaining container.
+                         Args: (C1, C2, ...) as RDF list starting at the function node.
+  set:setforAll        — for every member M of container (2nd arg), evaluate condition
+                         (3rd arg) with the member variable (1st arg / rdf:first)
+                         substituted by M.  Empty container → vacuously True.
+
 Metric resolution patterns (replaces Jena tmf_metrics_eval.rules):
   A) rdf:first → <metric URI>       — direct ref; resolved via met:Observation
   B) rdf:first → met:metlastValue   — latest observation for linked metric
@@ -62,6 +73,7 @@ logger = logging.getLogger(__name__)
 _QUAN = rdflib.Namespace("http://tio.models.tmforum.org/tio/v3.6.0/QuantityOntology/")
 _MET  = rdflib.Namespace("http://tio.models.tmforum.org/tio/v3.6.0/MetricsAndObservations/")
 _LOG  = rdflib.Namespace("http://tio.models.tmforum.org/tio/v3.6.0/LogicalOperators/")
+_SET  = rdflib.Namespace("http://tio.models.tmforum.org/tio/v3.6.0/SetOperators/")
 
 # (rdf_type, comparator, display_symbol) — two-argument quantity pattern
 _TWO_ARG_OPS: list[tuple[rdflib.URIRef, object, str]] = [
@@ -294,6 +306,133 @@ def _eval_match_statement(g: rdflib.Graph, list_node: rdflib.term.Node) -> tuple
     return overall, results
 
 
+# ── Set operator helpers ──────────────────────────────────────────────────────
+
+def _container_members(g: rdflib.Graph, container: rdflib.term.Node) -> frozenset:
+    """All rdfs:member items of a container node."""
+    return frozenset(g.objects(container, RDFS.member))
+
+
+def _substitute_node(
+    g: rdflib.Graph,
+    old: rdflib.term.Node,
+    new: rdflib.term.Node,
+) -> rdflib.Graph:
+    """Return a copy of g with every subject/object occurrence of old replaced by new."""
+    ng = rdflib.Graph()
+    for s, p, o in g:
+        ng.add((new if s == old else s, p, new if o == old else o))
+    return ng
+
+
+def _eval_is_member(g: rdflib.Graph, node: rdflib.term.Node) -> tuple[bool, list[dict]]:
+    """
+    set:setisMember — true if rdf:first resource is a member of ANY container
+    in rdf:rest.  Supports rdfs:member encoding and RDF-list encoding for the
+    container list.
+    """
+    resource = g.value(node, RDF.first)
+    rest = g.value(node, RDF.rest)
+    if resource is None or rest is None:
+        return False, [{"type": "setIsMember", "error": "missing rdf:first or rdf:rest", "passed": False}]
+
+    # Canonical TIO encoding: rest node has rdfs:member pointing to each container.
+    # Fall back to interpreting rest as an RDF list of containers.
+    containers = list(g.objects(rest, RDFS.member))
+    if not containers:
+        containers = list(_iter_rdf_list(g, rest))
+
+    if not containers:
+        return False, [{"type": "setIsMember", "error": "no containers specified", "passed": False}]
+
+    passed = any(resource in _container_members(g, c) for c in containers)
+    return passed, [{"type": "setIsMember", "resource": str(resource),
+                     "container_count": len(containers), "passed": passed}]
+
+
+def _eval_intersects_with(g: rdflib.Graph, node: rdflib.term.Node) -> tuple[bool, list[dict]]:
+    """
+    set:setintersectsWith — true if C1 and C2 share at least one rdfs:member.
+    Args encoded as RDF list: rdf:first → C1, rdf:rest/rdf:first → C2.
+    """
+    c1 = g.value(node, RDF.first)
+    rest = g.value(node, RDF.rest)
+    c2 = g.value(rest, RDF.first) if rest is not None else None
+    if c1 is None or c2 is None:
+        return False, [{"type": "setIntersectsWith", "error": "missing C1 or C2", "passed": False}]
+
+    m1 = _container_members(g, c1)
+    m2 = _container_members(g, c2)
+    passed = bool(m1 & m2)
+    return passed, [{"type": "setIntersectsWith", "c1_size": len(m1),
+                     "c2_size": len(m2), "passed": passed}]
+
+
+def _eval_included_in(g: rdflib.Graph, node: rdflib.term.Node) -> tuple[bool, list[dict]]:
+    """
+    set:setincludedIn — true if every member of C1 is also in each remaining
+    container.  Args are the RDF list starting at the function node itself:
+    rdf:first → C1, rdf:rest/rdf:first → C2, ...
+    """
+    items = list(_iter_rdf_list(g, node))
+    if len(items) < 2:
+        return False, [{"type": "setIncludedIn",
+                        "error": f"expected ≥2 args, got {len(items)}", "passed": False}]
+
+    c1 = items[0]
+    rest_containers = items[1:]
+    m1 = _container_members(g, c1)
+
+    if not m1:
+        # Empty set is vacuously included in anything.
+        return True, [{"type": "setIncludedIn", "c1_size": 0, "passed": True}]
+
+    passed = all(m1 <= _container_members(g, c) for c in rest_containers)
+    return passed, [{"type": "setIncludedIn", "c1_size": len(m1),
+                     "target_count": len(rest_containers), "passed": passed}]
+
+
+def _eval_for_all(g: rdflib.Graph, node: rdflib.term.Node) -> tuple[bool, list[dict]]:
+    """
+    set:setforAll — for every member M of container, evaluate condition with the
+    member variable substituted by M.
+
+    Structure (RDF list encoding):
+      rdf:first         → member_var   (the placeholder URI)
+      rdf:rest/rdf:first → container
+      rdf:rest/rdf:rest/rdf:first → condition node
+
+    Empty container → vacuously True.
+    """
+    member_var = g.value(node, RDF.first)
+    rest = g.value(node, RDF.rest)
+    container = g.value(rest, RDF.first) if rest is not None else None
+    rest2 = g.value(rest, RDF.rest) if rest is not None else None
+    condition_orig = g.value(rest2, RDF.first) if rest2 is not None else None
+
+    if member_var is None or container is None or condition_orig is None:
+        return False, [{"type": "setForAll",
+                        "error": "missing member_var, container, or condition", "passed": False}]
+
+    members = list(_container_members(g, container))
+    if not members:
+        # Vacuously true: no member can violate the condition.
+        return True, [{"type": "setForAll", "member_count": 0, "passed": True}]
+
+    all_conds: list[dict] = []
+    all_passed = True
+    for member in members:
+        g_sub = _substitute_node(g, member_var, member)
+        cond_node = member if condition_orig == member_var else condition_orig
+        m_passed, m_conds = _eval_node(g_sub, cond_node)
+        if not m_passed:
+            all_passed = False
+        all_conds.extend(m_conds)
+
+    return all_passed, all_conds or [{"type": "setForAll", "member_count": len(members),
+                                      "passed": all_passed}]
+
+
 # ── Recursive tree evaluator ──────────────────────────────────────────────────
 
 def _eval_node(g: rdflib.Graph, node: rdflib.term.Node) -> tuple[bool, list[dict]]:
@@ -355,6 +494,16 @@ def _eval_node(g: rdflib.Graph, node: rdflib.term.Node) -> tuple[bool, list[dict
         cond = _eval_range(g, node)
         return cond["passed"], [cond]
 
+    # ── Set boolean conditions ────────────────────────────────────────────────
+    if (node, RDF.type, _SET.setisMember) in g:
+        return _eval_is_member(g, node)
+    if (node, RDF.type, _SET.setintersectsWith) in g:
+        return _eval_intersects_with(g, node)
+    if (node, RDF.type, _SET.setincludedIn) in g:
+        return _eval_included_in(g, node)
+    if (node, RDF.type, _SET.setforAll) in g:
+        return _eval_for_all(g, node)
+
     # ── Unknown/opaque — pass silently (no evaluable content) ────────────────
     return True, []
 
@@ -387,31 +536,74 @@ def _find_evaluation_roots(g: rdflib.Graph) -> list[rdflib.term.Node]:
 
 # ── Flat-scan fallback ────────────────────────────────────────────────────────
 
+def _condition_nodes_embedded_in_set_ops(g: rdflib.Graph) -> set[rdflib.term.Node]:
+    """
+    Return the set of condition nodes that are internal arguments to set ops.
+
+    These nodes must not be evaluated independently by flat-scan: they reference
+    the member variable (e.g. set:setforAll condition) and are only meaningful
+    when evaluated with a substituted graph inside the set op evaluator.
+    """
+    embedded: set[rdflib.term.Node] = set()
+    for node in g.subjects(RDF.type, _SET.setforAll):
+        rest = g.value(node, RDF.rest)
+        rest2 = g.value(rest, RDF.rest) if rest is not None else None
+        cond = g.value(rest2, RDF.first) if rest2 is not None else None
+        if cond is not None:
+            embedded.add(cond)
+    return embedded
+
+
 def _flat_scan(g: rdflib.Graph) -> list[dict]:
     """
-    Collect and evaluate every quantity condition node in the graph, ignoring
-    any logical structure. Used when the expression has no log:* combinators.
-    Maintains backward compatibility with bare quantity-condition Turtle.
+    Collect and evaluate every quantity and set condition node in the graph,
+    ignoring any logical structure. Used when the expression has no log:*
+    combinators. Maintains backward compatibility with bare condition Turtle.
+
+    Condition nodes that are arguments inside set op structures (e.g. the
+    condition subtree of a setforAll) are excluded — they are evaluated with
+    proper variable substitution by the set op evaluator instead.
     """
+    excluded = _condition_nodes_embedded_in_set_ops(g)
     conditions: list[dict] = []
     for rdf_type, cmp_op, sym in _TWO_ARG_OPS:
         for node in g.subjects(RDF.type, rdf_type):
-            conditions.append(_eval_two_arg(g, node, rdf_type, cmp_op, sym))
+            if node not in excluded:
+                conditions.append(_eval_two_arg(g, node, rdf_type, cmp_op, sym))
     for node in g.subjects(RDF.type, _QUAN.quaninRange):
-        conditions.append(_eval_range(g, node))
+        if node not in excluded:
+            conditions.append(_eval_range(g, node))
+    for node in g.subjects(RDF.type, _SET.setisMember):
+        _, conds = _eval_is_member(g, node)
+        conditions.extend(conds)
+    for node in g.subjects(RDF.type, _SET.setintersectsWith):
+        _, conds = _eval_intersects_with(g, node)
+        conditions.extend(conds)
+    for node in g.subjects(RDF.type, _SET.setincludedIn):
+        _, conds = _eval_included_in(g, node)
+        conditions.extend(conds)
+    for node in g.subjects(RDF.type, _SET.setforAll):
+        _, conds = _eval_for_all(g, node)
+        conditions.extend(conds)
     return conditions
 
 
 # ── Reporting helpers ─────────────────────────────────────────────────────────
 
+_SET_COND_TYPES = frozenset(["setIsMember", "setIntersectsWith", "setIncludedIn", "setForAll"])
+
+
 def _fail_label(c: dict) -> str:
     if "error" in c:
         return c["error"]
-    if c["type"] in ("logMatch", "logMatchAll", "logMatchAny", "logMatchNone",
-                     "logMatchOne", "logMatchStatement"):
+    t = c["type"]
+    if t in ("logMatch", "logMatchAll", "logMatchAny", "logMatchNone",
+             "logMatchOne", "logMatchStatement"):
         pred = c.get("predicate", "?")
         obj  = c.get("object", "?")
-        return f"{c['type']}({pred}, {obj}): FAIL"
+        return f"{t}({pred}, {obj}): FAIL"
+    if t in _SET_COND_TYPES:
+        return f"{t}: FAIL"
     bnd = c["bound"] if "bound" in c else f"{c.get('lower')}…{c.get('upper')}"
     return f"{c.get('observed')} {c['operator']} {bnd}: FAIL"
 

@@ -666,6 +666,328 @@ class TestMetricResolution:
         assert result["conditions"][0]["observed"] == 50.0
 
 
+# ── set operators (tmf_set_ops_eval.rules Python port) ───────────────────────
+
+_SET_PFX = """\
+@prefix set:  <http://tio.models.tmforum.org/tio/v3.6.0/SetOperators/> .
+@prefix quan: <http://tio.models.tmforum.org/tio/v3.6.0/QuantityOntology/> .
+@prefix rdf:  <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd:  <http://www.w3.org/2001/XMLSchema#> .
+"""
+
+
+class TestSetIsMember:
+    """set:setisMember — resource in any listed container → True."""
+
+    def _turtle(self, resource_in_c1: bool) -> str:
+        member_line = "<urn:t:c1> rdfs:member <urn:t:res> ." if resource_in_c1 else ""
+        return (
+            _SET_PFX
+            + "<urn:t:check> a set:setisMember ;\n"
+            "  rdf:first <urn:t:res> ;\n"
+            "  rdf:rest  <urn:t:bag> .\n"
+            "<urn:t:bag> rdfs:member <urn:t:c1> .\n"
+            + member_line + "\n"
+        )
+
+    def test_is_member_pass(self):
+        result = evaluate_turtle_conditions(self._turtle(True))
+        assert result["intentHandlingState"] == "Fulfilled"
+        c = result["conditions"][0]
+        assert c["type"] == "setIsMember"
+        assert c["passed"] is True
+
+    def test_is_member_fail(self):
+        result = evaluate_turtle_conditions(self._turtle(False))
+        assert result["intentHandlingState"] == "Degraded"
+        c = result["conditions"][0]
+        assert c["type"] == "setIsMember"
+        assert c["passed"] is False
+
+    def test_is_member_in_second_container(self):
+        """Resource absent from C1 but present in C2 → passes."""
+        turtle = (
+            _SET_PFX
+            + "<urn:t:check> a set:setisMember ;\n"
+            "  rdf:first <urn:t:res> ;\n"
+            "  rdf:rest  <urn:t:bag> .\n"
+            "<urn:t:bag> rdfs:member <urn:t:c1> ;\n"
+            "            rdfs:member <urn:t:c2> .\n"
+            # not in c1
+            "<urn:t:c2> rdfs:member <urn:t:res> .\n"
+        )
+        result = evaluate_turtle_conditions(turtle)
+        assert result["intentHandlingState"] == "Fulfilled"
+
+    def test_is_member_rdf_list_encoding(self):
+        """RDF-list encoding for the container list (fallback path)."""
+        turtle = (
+            _SET_PFX
+            + "<urn:t:check> a set:setisMember ;\n"
+            "  rdf:first <urn:t:res> ;\n"
+            "  rdf:rest  ( <urn:t:c1> ) .\n"
+            "<urn:t:c1> rdfs:member <urn:t:res> .\n"
+        )
+        result = evaluate_turtle_conditions(turtle)
+        assert result["intentHandlingState"] == "Fulfilled"
+
+    def test_is_member_missing_rest_degraded(self):
+        turtle = (
+            _SET_PFX
+            + "<urn:t:check> a set:setisMember ;\n"
+            "  rdf:first <urn:t:res> .\n"  # no rdf:rest
+        )
+        result = evaluate_turtle_conditions(turtle)
+        assert result["intentHandlingState"] == "Degraded"
+        assert "missing" in result["conditions"][0]["error"]
+
+    def test_is_member_fail_label_in_reason(self):
+        result = evaluate_turtle_conditions(self._turtle(False))
+        assert "setIsMember: FAIL" in result["reason"]
+
+
+class TestSetIntersectsWith:
+    """set:setintersectsWith — common member in C1 and C2 → True."""
+
+    def _turtle(self, shared: bool) -> str:
+        c2_members = (
+            "<urn:t:c2> rdfs:member <urn:t:item2> ; rdfs:member <urn:t:item3> .\n"
+            if shared
+            else "<urn:t:c2> rdfs:member <urn:t:item3> .\n"
+        )
+        return (
+            _SET_PFX
+            + "<urn:t:check> a set:setintersectsWith ;\n"
+            "  rdf:first <urn:t:c1> ;\n"
+            "  rdf:rest  [ rdf:first <urn:t:c2> ] .\n"
+            "<urn:t:c1> rdfs:member <urn:t:item1> ; rdfs:member <urn:t:item2> .\n"
+            + c2_members
+        )
+
+    def test_intersects_pass(self):
+        result = evaluate_turtle_conditions(self._turtle(True))
+        assert result["intentHandlingState"] == "Fulfilled"
+        c = result["conditions"][0]
+        assert c["type"] == "setIntersectsWith"
+        assert c["passed"] is True
+
+    def test_intersects_fail_disjoint(self):
+        result = evaluate_turtle_conditions(self._turtle(False))
+        assert result["intentHandlingState"] == "Degraded"
+        assert result["conditions"][0]["passed"] is False
+
+    def test_intersects_empty_containers_fail(self):
+        turtle = (
+            _SET_PFX
+            + "<urn:t:check> a set:setintersectsWith ;\n"
+            "  rdf:first <urn:t:c1> ;\n"
+            "  rdf:rest  [ rdf:first <urn:t:c2> ] .\n"
+        )
+        result = evaluate_turtle_conditions(turtle)
+        assert result["intentHandlingState"] == "Degraded"
+        assert result["conditions"][0]["passed"] is False
+
+    def test_intersects_missing_c2_error(self):
+        turtle = (
+            _SET_PFX
+            + "<urn:t:check> a set:setintersectsWith ;\n"
+            "  rdf:first <urn:t:c1> .\n"  # no rdf:rest
+        )
+        result = evaluate_turtle_conditions(turtle)
+        assert result["intentHandlingState"] == "Degraded"
+        assert "missing" in result["conditions"][0]["error"]
+
+
+class TestSetIncludedIn:
+    """set:setincludedIn — C1 ⊆ C2 → True."""
+
+    def test_included_in_pass(self):
+        turtle = (
+            _SET_PFX
+            + "<urn:t:check> a set:setincludedIn ;\n"
+            "  rdf:first <urn:t:c1> ;\n"
+            "  rdf:rest  [ rdf:first <urn:t:c2> ] .\n"
+            "<urn:t:c1> rdfs:member <urn:t:a> ; rdfs:member <urn:t:b> .\n"
+            "<urn:t:c2> rdfs:member <urn:t:a> ; rdfs:member <urn:t:b> ; rdfs:member <urn:t:c> .\n"
+        )
+        result = evaluate_turtle_conditions(turtle)
+        assert result["intentHandlingState"] == "Fulfilled"
+        c = result["conditions"][0]
+        assert c["type"] == "setIncludedIn"
+        assert c["passed"] is True
+
+    def test_included_in_fail_extra_member(self):
+        turtle = (
+            _SET_PFX
+            + "<urn:t:check> a set:setincludedIn ;\n"
+            "  rdf:first <urn:t:c1> ;\n"
+            "  rdf:rest  [ rdf:first <urn:t:c2> ] .\n"
+            "<urn:t:c1> rdfs:member <urn:t:a> ; rdfs:member <urn:t:x> .\n"  # x not in c2
+            "<urn:t:c2> rdfs:member <urn:t:a> .\n"
+        )
+        result = evaluate_turtle_conditions(turtle)
+        assert result["intentHandlingState"] == "Degraded"
+        assert result["conditions"][0]["passed"] is False
+
+    def test_included_in_empty_c1_vacuous_pass(self):
+        turtle = (
+            _SET_PFX
+            + "<urn:t:check> a set:setincludedIn ;\n"
+            "  rdf:first <urn:t:c1> ;\n"
+            "  rdf:rest  [ rdf:first <urn:t:c2> ] .\n"
+            # c1 has no members — vacuously included in anything
+            "<urn:t:c2> rdfs:member <urn:t:a> .\n"
+        )
+        result = evaluate_turtle_conditions(turtle)
+        assert result["intentHandlingState"] == "Fulfilled"
+
+    def test_included_in_missing_second_arg_error(self):
+        turtle = (
+            _SET_PFX
+            + "<urn:t:check> a set:setincludedIn ;\n"
+            "  rdf:first <urn:t:c1> .\n"  # only one arg
+        )
+        result = evaluate_turtle_conditions(turtle)
+        assert result["intentHandlingState"] == "Degraded"
+        assert "expected" in result["conditions"][0]["error"]
+
+
+class TestSetForAll:
+    """set:setforAll — every member of container satisfies condition."""
+
+    _FORALL_PFX = _SET_PFX + (
+        "<urn:t:forAll> a set:setforAll ;\n"
+        "  rdf:first <urn:t:x> ;\n"           # member variable
+        "  rdf:rest  <urn:t:r1> .\n"
+        "<urn:t:r1> rdf:first <urn:t:c1> ;\n"  # container
+        "           rdf:rest  <urn:t:r2> .\n"
+        "<urn:t:r2> rdf:first <urn:t:cond> .\n" # condition
+        "<urn:t:cond> a quan:quanatLeast ;\n"
+        "  rdf:first <urn:t:x> ;\n"            # references member variable
+        "  rdf:rest  [ rdf:first <urn:t:bnd> ] .\n"
+        "<urn:t:bnd> rdf:value \"40\"^^xsd:decimal .\n"
+    )
+
+    def test_forall_all_pass(self):
+        turtle = (
+            self._FORALL_PFX
+            + "<urn:t:c1> rdfs:member <urn:t:v50> ; rdfs:member <urn:t:v80> .\n"
+            "<urn:t:v50> rdf:value \"50\"^^xsd:decimal .\n"
+            "<urn:t:v80> rdf:value \"80\"^^xsd:decimal .\n"
+        )
+        result = evaluate_turtle_conditions(turtle)
+        assert result["intentHandlingState"] == "Fulfilled"
+
+    def test_forall_one_member_fails(self):
+        turtle = (
+            self._FORALL_PFX
+            + "<urn:t:c1> rdfs:member <urn:t:v50> ; rdfs:member <urn:t:v30> .\n"
+            "<urn:t:v50> rdf:value \"50\"^^xsd:decimal .\n"
+            "<urn:t:v30> rdf:value \"30\"^^xsd:decimal .\n"  # 30 < 40 → fail
+        )
+        result = evaluate_turtle_conditions(turtle)
+        assert result["intentHandlingState"] == "Degraded"
+
+    def test_forall_empty_container_vacuous_pass(self):
+        turtle = (
+            self._FORALL_PFX
+            # c1 has no members
+        )
+        result = evaluate_turtle_conditions(turtle)
+        assert result["intentHandlingState"] == "Fulfilled"
+        assert result["conditions"][0]["member_count"] == 0
+
+    def test_forall_missing_structure_error(self):
+        turtle = (
+            _SET_PFX
+            + "<urn:t:forAll> a set:setforAll .\n"  # no rdf:first or rest
+        )
+        result = evaluate_turtle_conditions(turtle)
+        assert result["intentHandlingState"] == "Degraded"
+        assert "missing" in result["conditions"][0]["error"]
+
+    def test_forall_inside_allof_combinator(self):
+        """setForAll nested inside a log:allOf combinator tree."""
+        turtle = (
+            _SET_PFX
+            + "@prefix log: <http://tio.models.tmforum.org/tio/v3.6.0/LogicalOperators/> .\n"
+            "<urn:t:root> log:allOf ( <urn:t:forAll> ) .\n"
+            "<urn:t:forAll> a set:setforAll ;\n"
+            "  rdf:first <urn:t:x> ;\n"
+            "  rdf:rest  <urn:t:r1> .\n"
+            "<urn:t:r1> rdf:first <urn:t:c1> ; rdf:rest <urn:t:r2> .\n"
+            "<urn:t:r2> rdf:first <urn:t:cond> .\n"
+            "<urn:t:cond> a quan:quanatLeast ;\n"
+            "  rdf:first <urn:t:x> ;\n"
+            "  rdf:rest  [ rdf:first <urn:t:bnd> ] .\n"
+            "<urn:t:bnd> rdf:value \"10\"^^xsd:decimal .\n"
+            "<urn:t:c1> rdfs:member <urn:t:v20> .\n"
+            "<urn:t:v20> rdf:value \"20\"^^xsd:decimal .\n"
+        )
+        result = evaluate_turtle_conditions(turtle)
+        assert result["intentHandlingState"] == "Fulfilled"
+
+
+class TestSetOpsFlatScan:
+    """Set ops collected by flat-scan when no combinators are present."""
+
+    def test_flat_scan_collects_is_member(self):
+        turtle = (
+            _SET_PFX
+            + "<urn:t:check> a set:setisMember ;\n"
+            "  rdf:first <urn:t:res> ;\n"
+            "  rdf:rest  <urn:t:bag> .\n"
+            "<urn:t:bag> rdfs:member <urn:t:c1> .\n"
+            "<urn:t:c1> rdfs:member <urn:t:res> .\n"
+        )
+        result = evaluate_turtle_conditions(turtle)
+        assert any(c["type"] == "setIsMember" for c in result["conditions"])
+
+    def test_flat_scan_collects_intersects_with(self):
+        turtle = (
+            _SET_PFX
+            + "<urn:t:check> a set:setintersectsWith ;\n"
+            "  rdf:first <urn:t:c1> ;\n"
+            "  rdf:rest  [ rdf:first <urn:t:c2> ] .\n"
+            "<urn:t:c1> rdfs:member <urn:t:x> .\n"
+            "<urn:t:c2> rdfs:member <urn:t:x> .\n"
+        )
+        result = evaluate_turtle_conditions(turtle)
+        assert any(c["type"] == "setIntersectsWith" for c in result["conditions"])
+
+    def test_flat_scan_collects_included_in(self):
+        turtle = (
+            _SET_PFX
+            + "<urn:t:check> a set:setincludedIn ;\n"
+            "  rdf:first <urn:t:c1> ;\n"
+            "  rdf:rest  [ rdf:first <urn:t:c2> ] .\n"
+            "<urn:t:c1> rdfs:member <urn:t:a> .\n"
+            "<urn:t:c2> rdfs:member <urn:t:a> .\n"
+        )
+        result = evaluate_turtle_conditions(turtle)
+        assert any(c["type"] == "setIncludedIn" for c in result["conditions"])
+
+    def test_flat_scan_collects_forall(self):
+        turtle = (
+            _SET_PFX
+            + "<urn:t:f> a set:setforAll ;\n"
+            "  rdf:first <urn:t:x> ;\n"
+            "  rdf:rest  <urn:t:r1> .\n"
+            "<urn:t:r1> rdf:first <urn:t:c1> ; rdf:rest <urn:t:r2> .\n"
+            "<urn:t:r2> rdf:first <urn:t:cond> .\n"
+            "<urn:t:cond> a quan:quanatLeast ;\n"
+            "  rdf:first <urn:t:x> ;\n"
+            "  rdf:rest  [ rdf:first <urn:t:bnd> ] .\n"
+            "<urn:t:bnd> rdf:value \"5\"^^xsd:decimal .\n"
+            "<urn:t:c1> rdfs:member <urn:t:v10> .\n"
+            "<urn:t:v10> rdf:value \"10\"^^xsd:decimal .\n"
+        )
+        result = evaluate_turtle_conditions(turtle)
+        assert result["intentHandlingState"] == "Fulfilled"
+        assert any(c.get("passed") for c in result["conditions"])
+
+
 # ── dispatcher ────────────────────────────────────────────────────────────────
 
 
