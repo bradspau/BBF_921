@@ -7,7 +7,7 @@
 
 ## Commands
 - Generate models: `make models`
-- Run tests: `pytest tests/ -v --cov=src --cov-fail-under=80`
+- Run tests: `.venv/bin/pytest tests/ -v --cov=src --cov-fail-under=80`
 - Start dev server: `uvicorn src.main:app --reload`
 - Lint: `ruff check src/`
 - Seed data: `python seed_data/seed_intents.py`
@@ -62,8 +62,18 @@
 ## Fuseki Operational Notes
 - Default graph is always empty — query with `GRAPH ?g { ?s ?p ?o }` in the console
 - Named graph URIs: `http://tmforum.org/api/v5/intents/{uuid}`, `/intentSpecifications/{uuid}`, `/reports/{uuid}`
+- Handler state graph (OODA working memory): `http://tmforum.org/api/v5/intents/{uuid}/handlerState` — written after every evaluation cycle by `src/handler/state_writer.py`
 - `ensure_dataset()` treats 401/403 as OK — dataset pre-exists via assembler config
-- `tmf921-eval` dataset used exclusively by the intent evaluator (semaphore-serialised)
+- `tmf921-eval` dataset defined in fuseki-config.ttl but NOT used for evaluation — Fuseki 5.x SPARQL bypasses `ja:InfModel` at the DatasetGraph level; all TIO quantity evaluation runs in Python via `evaluate_turtle_conditions()` in `src/handler/evaluator.py`
+
+## Evaluation Architecture
+- `evaluate_turtle_conditions(turtle)` returns `{intentHandlingState, reason, conditions[]}` — `conditions` list has per-condition `{type, operator, observed, bound, passed}` detail for the OODA loop
+- `gsp_put(graph_uri, turtle)` preferred over SPARQL DROP+INSERT for named graph replacement — atomic, one HTTP call
+- TIO namespace authority: `http://tio.models.tmforum.org/tio/v3.6.0/{Module}/` — canonical prefixes in `ontology/jena-rules/tio_all.rules`; all seed/ontology files must use `http://` (not `https://`) and include `/tio/v3.6.0/`
+
+## Python/RDFLib Testing Gotchas
+- `Decimal("NaN")` does NOT raise `InvalidOperation` — use `"not-a-number"` string in tests targeting the non-numeric error path
+- RDFLib normalises `xsd:dateTime` `Z` suffix to `+00:00` on round-trip — use `assert "2026-06-04T09:00:00" in str(val)` not `== "...Z"`
 
 ## Security Patterns
 - All resource ID path params validated as UUID: `Annotated[str, Path(pattern=r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")]`
