@@ -666,6 +666,188 @@ class TestMetricResolution:
         assert result["conditions"][0]["observed"] == 50.0
 
 
+# ── Validity evaluation (tmf_validity_eval.rules Python port) ────────────────
+
+_IV_PFX = """\
+@prefix iv:   <http://tio.models.tmforum.org/tio/v3.6.0/IntentValidityOntology/> .
+@prefix quan: <http://tio.models.tmforum.org/tio/v3.6.0/QuantityOntology/> .
+@prefix log:  <http://tio.models.tmforum.org/tio/v3.6.0/LogicalOperators/> .
+@prefix rdf:  <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd:  <http://www.w3.org/2001/XMLSchema#> .
+"""
+
+# Quantity condition shared across window tests
+_WINDOW_COND = (
+    "<urn:t:cond> a quan:quanatLeast ;\n"
+    "  rdf:first <urn:t:val> ;\n"
+    "  rdf:rest  [ rdf:first <urn:t:bnd> ] ;\n"
+    "  iv:ivvalidIf <urn:t:window> .\n"
+    "<urn:t:val> rdf:value \"120\"^^xsd:decimal .\n"
+    "<urn:t:bnd> rdf:value \"100\"^^xsd:decimal .\n"
+)
+
+
+class TestValidityGate:
+    """iv:ivvalidIf — condition fails immediately when the window is closed."""
+
+    def test_open_window_condition_evaluated_normally(self):
+        """Valid window: 120 >= 100 → Fulfilled."""
+        turtle = _IV_PFX + _WINDOW_COND + "<urn:t:window> iv:ivisValid true .\n"
+        result = evaluate_turtle_conditions(turtle)
+        assert result["intentHandlingState"] == "Fulfilled"
+
+    def test_closed_window_degrades_regardless_of_condition(self):
+        """Expired window: condition would pass (120 >= 100) but gate fires → Degraded."""
+        turtle = _IV_PFX + _WINDOW_COND + "<urn:t:window> iv:ivisValid false .\n"
+        result = evaluate_turtle_conditions(turtle)
+        assert result["intentHandlingState"] == "Degraded"
+        c = result["conditions"][0]
+        assert c["type"] == "validityGate"
+        assert c["passed"] is False
+
+    def test_absent_ivisvalid_degrades(self):
+        """No iv:ivisValid on context node → treat as closed window → Degraded."""
+        turtle = _IV_PFX + _WINDOW_COND  # no iv:ivisValid asserted on window
+        result = evaluate_turtle_conditions(turtle)
+        assert result["intentHandlingState"] == "Degraded"
+        assert result["conditions"][0]["type"] == "validityGate"
+
+    def test_validity_gate_inside_allof(self):
+        """Gate applied to node inside a log:allOf combinator tree."""
+        turtle = (
+            _IV_PFX
+            + "<urn:t:root> log:allOf ( <urn:t:cond> ) .\n"
+            + _WINDOW_COND
+            + "<urn:t:window> iv:ivisValid false .\n"
+        )
+        result = evaluate_turtle_conditions(turtle)
+        assert result["intentHandlingState"] == "Degraded"
+        assert any(c["type"] == "validityGate" for c in result["conditions"])
+
+
+class TestSameValidityAs:
+    """iv:ivsameValidityAs — iv:ivisValid propagated through chains."""
+
+    def test_chain_propagates_true(self):
+        """X sameValidityAs Y; Y.ivisValid = true → X gating passes → Fulfilled."""
+        turtle = (
+            _IV_PFX
+            + _WINDOW_COND
+            + "<urn:t:window> iv:ivsameValidityAs <urn:t:other> .\n"
+            "<urn:t:other> iv:ivisValid true .\n"
+        )
+        result = evaluate_turtle_conditions(turtle)
+        assert result["intentHandlingState"] == "Fulfilled"
+
+    def test_chain_propagates_false(self):
+        """X sameValidityAs Y; Y.ivisValid = false → X gating fails → Degraded."""
+        turtle = (
+            _IV_PFX
+            + _WINDOW_COND
+            + "<urn:t:window> iv:ivsameValidityAs <urn:t:other> .\n"
+            "<urn:t:other> iv:ivisValid false .\n"
+        )
+        result = evaluate_turtle_conditions(turtle)
+        assert result["intentHandlingState"] == "Degraded"
+        assert result["conditions"][0]["type"] == "validityGate"
+
+    def test_two_hop_chain(self):
+        """X → Y → Z; Z.ivisValid = true propagates to X."""
+        turtle = (
+            _IV_PFX
+            + _WINDOW_COND
+            + "<urn:t:window> iv:ivsameValidityAs <urn:t:y> .\n"
+            "<urn:t:y> iv:ivsameValidityAs <urn:t:z> .\n"
+            "<urn:t:z> iv:ivisValid true .\n"
+        )
+        result = evaluate_turtle_conditions(turtle)
+        assert result["intentHandlingState"] == "Fulfilled"
+
+
+class TestValidityOf:
+    """iv:ivvalidityOf — passes iff ALL members have iv:ivisValid true."""
+
+    def test_all_members_valid_pass(self):
+        turtle = (
+            _IV_PFX
+            + "<urn:t:fn> a iv:ivvalidityOf ;\n"
+            "  rdfs:member <urn:t:r1> ;\n"
+            "  rdfs:member <urn:t:r2> .\n"
+            "<urn:t:r1> iv:ivisValid true .\n"
+            "<urn:t:r2> iv:ivisValid true .\n"
+        )
+        result = evaluate_turtle_conditions(turtle)
+        assert result["intentHandlingState"] == "Fulfilled"
+        c = result["conditions"][0]
+        assert c["type"] == "validityOf"
+        assert c["member_count"] == 2
+        assert c["passed"] is True
+
+    def test_one_member_invalid_fails(self):
+        turtle = (
+            _IV_PFX
+            + "<urn:t:fn> a iv:ivvalidityOf ;\n"
+            "  rdfs:member <urn:t:r1> ;\n"
+            "  rdfs:member <urn:t:r2> .\n"
+            "<urn:t:r1> iv:ivisValid true .\n"
+            "<urn:t:r2> iv:ivisValid false .\n"  # one invalid
+        )
+        result = evaluate_turtle_conditions(turtle)
+        assert result["intentHandlingState"] == "Degraded"
+        assert result["conditions"][0]["passed"] is False
+
+    def test_member_absent_ivisvalid_fails(self):
+        """Member with no iv:ivisValid counts as invalid."""
+        turtle = (
+            _IV_PFX
+            + "<urn:t:fn> a iv:ivvalidityOf ;\n"
+            "  rdfs:member <urn:t:r1> .\n"
+            # r1 has no iv:ivisValid
+        )
+        result = evaluate_turtle_conditions(turtle)
+        assert result["intentHandlingState"] == "Degraded"
+
+    def test_empty_members_vacuous_pass(self):
+        turtle = _IV_PFX + "<urn:t:fn> a iv:ivvalidityOf .\n"
+        result = evaluate_turtle_conditions(turtle)
+        assert result["intentHandlingState"] == "Fulfilled"
+        assert result["conditions"][0]["member_count"] == 0
+
+    def test_validity_of_inside_allof(self):
+        turtle = (
+            _IV_PFX
+            + "<urn:t:root> log:allOf ( <urn:t:fn> ) .\n"
+            "<urn:t:fn> a iv:ivvalidityOf ;\n"
+            "  rdfs:member <urn:t:r1> .\n"
+            "<urn:t:r1> iv:ivisValid true .\n"
+        )
+        result = evaluate_turtle_conditions(turtle)
+        assert result["intentHandlingState"] == "Fulfilled"
+
+    def test_validity_of_via_samevalidityas(self):
+        """Member's validity resolved through ivsameValidityAs chain."""
+        turtle = (
+            _IV_PFX
+            + "<urn:t:fn> a iv:ivvalidityOf ;\n"
+            "  rdfs:member <urn:t:r1> .\n"
+            "<urn:t:r1> iv:ivsameValidityAs <urn:t:source> .\n"
+            "<urn:t:source> iv:ivisValid true .\n"
+        )
+        result = evaluate_turtle_conditions(turtle)
+        assert result["intentHandlingState"] == "Fulfilled"
+
+    def test_validity_of_fail_label_in_reason(self):
+        turtle = (
+            _IV_PFX
+            + "<urn:t:fn> a iv:ivvalidityOf ;\n"
+            "  rdfs:member <urn:t:r1> .\n"
+            "<urn:t:r1> iv:ivisValid false .\n"
+        )
+        result = evaluate_turtle_conditions(turtle)
+        assert "validityOf: FAIL" in result["reason"]
+
+
 # ── ICM expectations (tio_core + tmf_icm_eval Python port) ──────────────────
 
 _ICM_PFX = """\

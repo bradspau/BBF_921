@@ -55,6 +55,17 @@ ICM expectation types (tio_core + tmf_icm_eval):
   icm:PropertyExpectation — passes if rdf:value is "true"^^xsd:boolean
                             (icmPropertyResult rule).
 
+Validity evaluation (tmf_validity_eval):
+  Pre-processing: iv:ivsameValidityAs chains are resolved so that iv:ivisValid
+                  is propagated to all linked nodes before any condition is
+                  evaluated (_resolve_validity_chains).
+  iv:ivvalidityOf — boolean function: passes iff ALL rdfs:member resources carry
+                    iv:ivisValid "true"^^xsd:boolean (ivValidityOf rule).
+  iv:ivvalidIf gate — any condition node that has iv:ivvalidIf pointing to a
+                      validity context whose iv:ivisValid is absent or false will
+                      fail immediately (validityGate condition), regardless of the
+                      condition's own value.
+
 Metric resolution patterns (replaces Jena tmf_metrics_eval.rules):
   A) rdf:first → <metric URI>       — direct ref; resolved via met:Observation
   B) rdf:first → met:metlastValue   — latest observation for linked metric
@@ -82,6 +93,7 @@ _MET  = rdflib.Namespace("http://tio.models.tmforum.org/tio/v3.6.0/MetricsAndObs
 _LOG  = rdflib.Namespace("http://tio.models.tmforum.org/tio/v3.6.0/LogicalOperators/")
 _SET  = rdflib.Namespace("http://tio.models.tmforum.org/tio/v3.6.0/SetOperators/")
 _ICM  = rdflib.Namespace("http://tio.models.tmforum.org/tio/v3.6.0/IntentCommonModel/")
+_IV   = rdflib.Namespace("http://tio.models.tmforum.org/tio/v3.6.0/IntentValidityOntology/")
 
 # (rdf_type, comparator, display_symbol) — two-argument quantity pattern
 _TWO_ARG_OPS: list[tuple[rdflib.URIRef, object, str]] = [
@@ -180,6 +192,29 @@ def _resolve_metric_refs(g: rdflib.Graph) -> None:
             val = _latest_observation_value(g, val_node)
             if val is not None:
                 g.set((val_node, RDF.value, val))
+
+
+# ── Validity chain pre-processing ────────────────────────────────────────────
+
+def _resolve_validity_chains(g: rdflib.Graph) -> None:
+    """
+    Propagate iv:ivisValid through iv:ivsameValidityAs chains (ivSameValidityAs rule).
+
+    Rule: (?X iv:ivsameValidityAs ?Y) (?Y iv:ivisValid ?B) → (?X iv:ivisValid ?B)
+
+    Runs to fixed-point to handle chains of arbitrary depth.
+    """
+    changed = True
+    while changed:
+        changed = False
+        for x, y in list(g.subject_objects(_IV.ivsameValidityAs)):
+            b = g.value(y, _IV.ivisValid)
+            if b is None:
+                continue
+            existing = g.value(x, _IV.ivisValid)
+            if existing != b:
+                g.set((x, _IV.ivisValid, b))
+                changed = True
 
 
 # ── RDF list iteration ────────────────────────────────────────────────────────
@@ -487,6 +522,25 @@ def _eval_property_expectation(g: rdflib.Graph, node: rdflib.term.Node) -> tuple
                      "passed": passed}]
 
 
+# ── Validity function evaluator (tmf_validity_eval) ──────────────────────────
+
+def _eval_validity_of(g: rdflib.Graph, node: rdflib.term.Node) -> tuple[bool, list[dict]]:
+    """
+    iv:ivvalidityOf — passes iff ALL rdfs:member resources have
+    iv:ivisValid "true"^^xsd:boolean (ivValidityOf rule).
+    Empty member set → vacuously True.
+    """
+    members = list(g.objects(node, RDFS.member))
+    if not members:
+        return True, [{"type": "validityOf", "member_count": 0, "passed": True}]
+
+    passed = all(
+        g.value(m, _IV.ivisValid) == rdflib.Literal(True)
+        for m in members
+    )
+    return passed, [{"type": "validityOf", "member_count": len(members), "passed": passed}]
+
+
 # ── Recursive tree evaluator ──────────────────────────────────────────────────
 
 def _eval_node(g: rdflib.Graph, node: rdflib.term.Node) -> tuple[bool, list[dict]]:
@@ -503,6 +557,14 @@ def _eval_node(g: rdflib.Graph, node: rdflib.term.Node) -> tuple[bool, list[dict
     4. Unknown/opaque nodes → pass with no conditions (non-evaluable elements
        like icm:Context, icm:Target, icm:ReportingExpectation are ignored)
     """
+    # ── iv:ivvalidIf gate ─────────────────────────────────────────────────────
+    # If the node's validity context is not currently valid, fail immediately.
+    validity_ctx = g.value(node, _IV.ivvalidIf)
+    if validity_ctx is not None:
+        if g.value(validity_ctx, _IV.ivisValid) != rdflib.Literal(True):
+            return False, [{"type": "validityGate",
+                            "context": str(validity_ctx), "passed": False}]
+
     # ── Combinators ───────────────────────────────────────────────────────────
     for prop, combinator in _LOG_COMBINATORS:
         list_node = g.value(node, prop)
@@ -564,6 +626,10 @@ def _eval_node(g: rdflib.Graph, node: rdflib.term.Node) -> tuple[bool, list[dict
     if (node, RDF.type, _ICM.PropertyExpectation) in g:
         return _eval_property_expectation(g, node)
 
+    # ── Validity function ─────────────────────────────────────────────────────
+    if (node, RDF.type, _IV.ivvalidityOf) in g:
+        return _eval_validity_of(g, node)
+
     # ── Unknown/opaque — pass silently (no evaluable content) ────────────────
     return True, []
 
@@ -616,9 +682,12 @@ def _condition_nodes_embedded_in_set_ops(g: rdflib.Graph) -> set[rdflib.term.Nod
 
 def _flat_scan(g: rdflib.Graph) -> list[dict]:
     """
-    Collect and evaluate every quantity and set condition node in the graph,
-    ignoring any logical structure. Used when the expression has no log:*
-    combinators. Maintains backward compatibility with bare condition Turtle.
+    Collect and evaluate every evaluable condition node in the graph, ignoring
+    any logical structure. Used when the expression has no log:* combinators.
+    Maintains backward compatibility with bare condition Turtle.
+
+    All nodes are evaluated via _eval_node so that the iv:ivvalidIf gate and
+    any other pre-checks apply uniformly.
 
     Condition nodes that are arguments inside set op structures (e.g. the
     condition subtree of a setforAll) are excluded — they are evaluated with
@@ -626,31 +695,22 @@ def _flat_scan(g: rdflib.Graph) -> list[dict]:
     """
     excluded = _condition_nodes_embedded_in_set_ops(g)
     conditions: list[dict] = []
-    for rdf_type, cmp_op, sym in _TWO_ARG_OPS:
+    seen: set[rdflib.term.Node] = set()
+
+    for rdf_type in (
+        *(rt for rt, _, _ in _TWO_ARG_OPS),
+        _QUAN.quaninRange,
+        _SET.setisMember, _SET.setintersectsWith, _SET.setincludedIn, _SET.setforAll,
+        _ICM.DeliveryExpectation, _ICM.PropertyExpectation,
+        _IV.ivvalidityOf,
+    ):
         for node in g.subjects(RDF.type, rdf_type):
-            if node not in excluded:
-                conditions.append(_eval_two_arg(g, node, rdf_type, cmp_op, sym))
-    for node in g.subjects(RDF.type, _QUAN.quaninRange):
-        if node not in excluded:
-            conditions.append(_eval_range(g, node))
-    for node in g.subjects(RDF.type, _SET.setisMember):
-        _, conds = _eval_is_member(g, node)
-        conditions.extend(conds)
-    for node in g.subjects(RDF.type, _SET.setintersectsWith):
-        _, conds = _eval_intersects_with(g, node)
-        conditions.extend(conds)
-    for node in g.subjects(RDF.type, _SET.setincludedIn):
-        _, conds = _eval_included_in(g, node)
-        conditions.extend(conds)
-    for node in g.subjects(RDF.type, _SET.setforAll):
-        _, conds = _eval_for_all(g, node)
-        conditions.extend(conds)
-    for node in g.subjects(RDF.type, _ICM.DeliveryExpectation):
-        _, conds = _eval_delivery_expectation(g, node)
-        conditions.extend(conds)
-    for node in g.subjects(RDF.type, _ICM.PropertyExpectation):
-        _, conds = _eval_property_expectation(g, node)
-        conditions.extend(conds)
+            if node in excluded or node in seen:
+                continue
+            seen.add(node)
+            _, conds = _eval_node(g, node)
+            conditions.extend(conds)
+
     return conditions
 
 
@@ -659,6 +719,7 @@ def _flat_scan(g: rdflib.Graph) -> list[dict]:
 _SIMPLE_FAIL_TYPES = frozenset([
     "setIsMember", "setIntersectsWith", "setIncludedIn", "setForAll",
     "DeliveryExpectation", "PropertyExpectation",
+    "validityOf", "validityGate",
 ])
 
 
@@ -703,6 +764,7 @@ def evaluate_turtle_conditions(turtle_str: str) -> dict:
         return {"intentHandlingState": "Degraded", "reason": f"Turtle parse error: {exc}", "conditions": []}
 
     _resolve_metric_refs(g)
+    _resolve_validity_chains(g)
 
     roots = _find_evaluation_roots(g)
 
