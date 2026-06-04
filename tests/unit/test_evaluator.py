@@ -666,6 +666,242 @@ class TestMetricResolution:
         assert result["conditions"][0]["observed"] == 50.0
 
 
+# ── ICM expectations (tio_core + tmf_icm_eval Python port) ──────────────────
+
+_ICM_PFX = """\
+@prefix icm: <http://tio.models.tmforum.org/tio/v3.6.0/IntentCommonModel/> .
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+"""
+
+
+class TestDeliveryExpectation:
+    """icm:DeliveryExpectation — target must contain a member of deliveryType."""
+
+    def test_delivery_pass_member_has_type(self):
+        turtle = (
+            _ICM_PFX
+            + "<urn:t:exp> a icm:DeliveryExpectation ;\n"
+            "  icm:target <urn:t:target> ;\n"
+            "  icm:deliveryType <urn:t:MyClass> .\n"
+            "<urn:t:target> rdfs:member <urn:t:res> .\n"
+            "<urn:t:res> rdf:type <urn:t:MyClass> .\n"
+        )
+        result = evaluate_turtle_conditions(turtle)
+        assert result["intentHandlingState"] == "Fulfilled"
+        c = result["conditions"][0]
+        assert c["type"] == "DeliveryExpectation"
+        assert c["passed"] is True
+        assert c["member_count"] == 1
+
+    def test_delivery_fail_wrong_type(self):
+        turtle = (
+            _ICM_PFX
+            + "<urn:t:exp> a icm:DeliveryExpectation ;\n"
+            "  icm:target <urn:t:target> ;\n"
+            "  icm:deliveryType <urn:t:MyClass> .\n"
+            "<urn:t:target> rdfs:member <urn:t:res> .\n"
+            "<urn:t:res> rdf:type <urn:t:OtherClass> .\n"  # wrong type
+        )
+        result = evaluate_turtle_conditions(turtle)
+        assert result["intentHandlingState"] == "Degraded"
+        c = result["conditions"][0]
+        assert c["type"] == "DeliveryExpectation"
+        assert c["passed"] is False
+
+    def test_delivery_pass_one_of_many_members_matches(self):
+        """Only one member needs to have the required type."""
+        turtle = (
+            _ICM_PFX
+            + "<urn:t:exp> a icm:DeliveryExpectation ;\n"
+            "  icm:target <urn:t:target> ;\n"
+            "  icm:deliveryType <urn:t:MyClass> .\n"
+            "<urn:t:target> rdfs:member <urn:t:r1> ; rdfs:member <urn:t:r2> .\n"
+            "<urn:t:r1> rdf:type <urn:t:OtherClass> .\n"
+            "<urn:t:r2> rdf:type <urn:t:MyClass> .\n"  # this one matches
+        )
+        result = evaluate_turtle_conditions(turtle)
+        assert result["intentHandlingState"] == "Fulfilled"
+        assert result["conditions"][0]["member_count"] == 2
+
+    def test_delivery_fail_empty_target(self):
+        turtle = (
+            _ICM_PFX
+            + "<urn:t:exp> a icm:DeliveryExpectation ;\n"
+            "  icm:target <urn:t:target> ;\n"
+            "  icm:deliveryType <urn:t:MyClass> .\n"
+            # target has no rdfs:member triples
+        )
+        result = evaluate_turtle_conditions(turtle)
+        assert result["intentHandlingState"] == "Degraded"
+        c = result["conditions"][0]
+        assert c["passed"] is False
+        assert c["error"] == "empty target container"
+
+    def test_delivery_fail_missing_target(self):
+        turtle = (
+            _ICM_PFX
+            + "<urn:t:exp> a icm:DeliveryExpectation ;\n"
+            "  icm:deliveryType <urn:t:MyClass> .\n"  # no icm:target
+        )
+        result = evaluate_turtle_conditions(turtle)
+        assert result["intentHandlingState"] == "Degraded"
+        assert "missing icm:target" in result["conditions"][0]["error"]
+
+    def test_delivery_fail_missing_delivery_type(self):
+        turtle = (
+            _ICM_PFX
+            + "<urn:t:exp> a icm:DeliveryExpectation ;\n"
+            "  icm:target <urn:t:target> .\n"  # no icm:deliveryType
+            "<urn:t:target> rdfs:member <urn:t:res> .\n"
+        )
+        result = evaluate_turtle_conditions(turtle)
+        assert result["intentHandlingState"] == "Degraded"
+        assert "missing icm:deliveryType" in result["conditions"][0]["error"]
+
+    def test_delivery_pre_computed_result_true(self):
+        """icm:result true already asserted — fast-path pass."""
+        turtle = (
+            _ICM_PFX
+            + "<urn:t:exp> a icm:DeliveryExpectation ;\n"
+            "  icm:result true .\n"
+        )
+        result = evaluate_turtle_conditions(turtle)
+        assert result["intentHandlingState"] == "Fulfilled"
+        assert result["conditions"][0]["passed"] is True
+
+    def test_delivery_fail_reason_includes_type(self):
+        """A delivery that fails due to wrong type should surface type name."""
+        turtle = (
+            _ICM_PFX
+            + "<urn:t:exp> a icm:DeliveryExpectation ;\n"
+            "  icm:target <urn:t:target> ;\n"
+            "  icm:deliveryType <urn:t:MyClass> .\n"
+            "<urn:t:target> rdfs:member <urn:t:res> .\n"
+            "<urn:t:res> rdf:type <urn:t:OtherClass> .\n"
+        )
+        result = evaluate_turtle_conditions(turtle)
+        assert "DeliveryExpectation: FAIL" in result["reason"]
+
+    def test_delivery_inside_allof_combinator(self):
+        turtle = (
+            _ICM_PFX
+            + "@prefix log: <http://tio.models.tmforum.org/tio/v3.6.0/LogicalOperators/> .\n"
+            "<urn:t:root> log:allOf ( <urn:t:exp> ) .\n"
+            "<urn:t:exp> a icm:DeliveryExpectation ;\n"
+            "  icm:target <urn:t:target> ;\n"
+            "  icm:deliveryType <urn:t:MyClass> .\n"
+            "<urn:t:target> rdfs:member <urn:t:res> .\n"
+            "<urn:t:res> rdf:type <urn:t:MyClass> .\n"
+        )
+        result = evaluate_turtle_conditions(turtle)
+        assert result["intentHandlingState"] == "Fulfilled"
+
+
+class TestPropertyExpectation:
+    """icm:PropertyExpectation — passes if rdf:value is boolean true."""
+
+    def test_property_pass_value_true(self):
+        turtle = (
+            _ICM_PFX
+            + "<urn:t:exp> a icm:PropertyExpectation ;\n"
+            "  rdf:value true .\n"
+        )
+        result = evaluate_turtle_conditions(turtle)
+        assert result["intentHandlingState"] == "Fulfilled"
+        c = result["conditions"][0]
+        assert c["type"] == "PropertyExpectation"
+        assert c["passed"] is True
+
+    def test_property_fail_value_false(self):
+        turtle = (
+            _ICM_PFX
+            + "<urn:t:exp> a icm:PropertyExpectation ;\n"
+            "  rdf:value false .\n"
+        )
+        result = evaluate_turtle_conditions(turtle)
+        assert result["intentHandlingState"] == "Degraded"
+        c = result["conditions"][0]
+        assert c["type"] == "PropertyExpectation"
+        assert c["passed"] is False
+
+    def test_property_fail_no_value(self):
+        turtle = (
+            _ICM_PFX
+            + "<urn:t:exp> a icm:PropertyExpectation .\n"
+        )
+        result = evaluate_turtle_conditions(turtle)
+        assert result["intentHandlingState"] == "Degraded"
+        assert result["conditions"][0]["passed"] is False
+        assert result["conditions"][0]["value"] is None
+
+    def test_property_fail_non_boolean_string(self):
+        """rdf:value "true"^^xsd:string is not a boolean — fails."""
+        turtle = (
+            _ICM_PFX
+            + "<urn:t:exp> a icm:PropertyExpectation ;\n"
+            '  rdf:value "true"^^xsd:string .\n'
+        )
+        result = evaluate_turtle_conditions(turtle)
+        assert result["intentHandlingState"] == "Degraded"
+        assert result["conditions"][0]["passed"] is False
+
+    def test_property_inside_allof_pass(self):
+        turtle = (
+            _ICM_PFX
+            + "@prefix log: <http://tio.models.tmforum.org/tio/v3.6.0/LogicalOperators/> .\n"
+            "<urn:t:root> log:allOf ( <urn:t:exp> ) .\n"
+            "<urn:t:exp> a icm:PropertyExpectation ;\n"
+            "  rdf:value true .\n"
+        )
+        result = evaluate_turtle_conditions(turtle)
+        assert result["intentHandlingState"] == "Fulfilled"
+
+    def test_property_inside_allof_fail(self):
+        turtle = (
+            _ICM_PFX
+            + "@prefix log: <http://tio.models.tmforum.org/tio/v3.6.0/LogicalOperators/> .\n"
+            "<urn:t:root> log:allOf ( <urn:t:exp> ) .\n"
+            "<urn:t:exp> a icm:PropertyExpectation ;\n"
+            "  rdf:value false .\n"
+        )
+        result = evaluate_turtle_conditions(turtle)
+        assert result["intentHandlingState"] == "Degraded"
+
+    def test_multiple_expectations_all_pass(self):
+        """Two expectations combined — both must pass."""
+        turtle = (
+            _ICM_PFX
+            + "<urn:t:e1> a icm:PropertyExpectation ; rdf:value true .\n"
+            "<urn:t:e2> a icm:DeliveryExpectation ;\n"
+            "  icm:target <urn:t:target> ;\n"
+            "  icm:deliveryType <urn:t:MyClass> .\n"
+            "<urn:t:target> rdfs:member <urn:t:res> .\n"
+            "<urn:t:res> rdf:type <urn:t:MyClass> .\n"
+        )
+        result = evaluate_turtle_conditions(turtle)
+        assert result["intentHandlingState"] == "Fulfilled"
+        assert len(result["conditions"]) == 2
+        assert all(c["passed"] for c in result["conditions"])
+
+    def test_mixed_expectations_one_fails(self):
+        """Property passes but delivery fails → overall Degraded."""
+        turtle = (
+            _ICM_PFX
+            + "<urn:t:e1> a icm:PropertyExpectation ; rdf:value true .\n"
+            "<urn:t:e2> a icm:DeliveryExpectation ;\n"
+            "  icm:target <urn:t:target> ;\n"
+            "  icm:deliveryType <urn:t:MyClass> .\n"
+            # target empty → delivery fails
+        )
+        result = evaluate_turtle_conditions(turtle)
+        assert result["intentHandlingState"] == "Degraded"
+        failed = [c for c in result["conditions"] if not c["passed"]]
+        assert len(failed) == 1
+        assert failed[0]["type"] == "DeliveryExpectation"
+
+
 # ── set operators (tmf_set_ops_eval.rules Python port) ───────────────────────
 
 _SET_PFX = """\

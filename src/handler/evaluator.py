@@ -48,6 +48,13 @@ Set operators supported (TIO SetOperators v3.6.0):
                          (3rd arg) with the member variable (1st arg / rdf:first)
                          substituted by M.  Empty container → vacuously True.
 
+ICM expectation types (tio_core + tmf_icm_eval):
+  icm:DeliveryExpectation — passes if icm:target container has ≥1 member whose
+                            rdf:type matches icm:deliveryType (icmDeliveryFulfilled).
+                            Also passes when icm:result true is already asserted.
+  icm:PropertyExpectation — passes if rdf:value is "true"^^xsd:boolean
+                            (icmPropertyResult rule).
+
 Metric resolution patterns (replaces Jena tmf_metrics_eval.rules):
   A) rdf:first → <metric URI>       — direct ref; resolved via met:Observation
   B) rdf:first → met:metlastValue   — latest observation for linked metric
@@ -74,6 +81,7 @@ _QUAN = rdflib.Namespace("http://tio.models.tmforum.org/tio/v3.6.0/QuantityOntol
 _MET  = rdflib.Namespace("http://tio.models.tmforum.org/tio/v3.6.0/MetricsAndObservations/")
 _LOG  = rdflib.Namespace("http://tio.models.tmforum.org/tio/v3.6.0/LogicalOperators/")
 _SET  = rdflib.Namespace("http://tio.models.tmforum.org/tio/v3.6.0/SetOperators/")
+_ICM  = rdflib.Namespace("http://tio.models.tmforum.org/tio/v3.6.0/IntentCommonModel/")
 
 # (rdf_type, comparator, display_symbol) — two-argument quantity pattern
 _TWO_ARG_OPS: list[tuple[rdflib.URIRef, object, str]] = [
@@ -433,6 +441,52 @@ def _eval_for_all(g: rdflib.Graph, node: rdflib.term.Node) -> tuple[bool, list[d
                                       "passed": all_passed}]
 
 
+# ── ICM expectation evaluators (tio_core + tmf_icm_eval) ─────────────────────
+
+def _eval_delivery_expectation(g: rdflib.Graph, node: rdflib.term.Node) -> tuple[bool, list[dict]]:
+    """
+    icm:DeliveryExpectation — passes if icm:target contains ≥1 member whose
+    rdf:type matches icm:deliveryType (icmDeliveryFulfilled rule), OR if
+    icm:result "true"^^xsd:boolean is already asserted on the node.
+    """
+    if (node, _ICM.result, rdflib.Literal(True)) in g:
+        return True, [{"type": "DeliveryExpectation", "passed": True}]
+
+    target = g.value(node, _ICM.target)
+    delivery_type = g.value(node, _ICM.deliveryType)
+
+    if target is None:
+        return False, [{"type": "DeliveryExpectation",
+                        "error": "missing icm:target", "passed": False}]
+    if delivery_type is None:
+        return False, [{"type": "DeliveryExpectation",
+                        "error": "missing icm:deliveryType", "passed": False}]
+
+    members = list(g.objects(target, RDFS.member))
+    if not members:
+        return False, [{"type": "DeliveryExpectation",
+                        "deliveryType": str(delivery_type),
+                        "error": "empty target container", "passed": False}]
+
+    passed = any((m, RDF.type, delivery_type) in g for m in members)
+    return passed, [{"type": "DeliveryExpectation",
+                     "deliveryType": str(delivery_type),
+                     "member_count": len(members),
+                     "passed": passed}]
+
+
+def _eval_property_expectation(g: rdflib.Graph, node: rdflib.term.Node) -> tuple[bool, list[dict]]:
+    """
+    icm:PropertyExpectation — passes if rdf:value is "true"^^xsd:boolean
+    (icmPropertyResult rule).
+    """
+    val = g.value(node, RDF.value)
+    passed = val == rdflib.Literal(True)
+    return passed, [{"type": "PropertyExpectation",
+                     "value": str(val) if val is not None else None,
+                     "passed": passed}]
+
+
 # ── Recursive tree evaluator ──────────────────────────────────────────────────
 
 def _eval_node(g: rdflib.Graph, node: rdflib.term.Node) -> tuple[bool, list[dict]]:
@@ -503,6 +557,12 @@ def _eval_node(g: rdflib.Graph, node: rdflib.term.Node) -> tuple[bool, list[dict
         return _eval_included_in(g, node)
     if (node, RDF.type, _SET.setforAll) in g:
         return _eval_for_all(g, node)
+
+    # ── ICM expectation types ────────────────────────────────────────────────
+    if (node, RDF.type, _ICM.DeliveryExpectation) in g:
+        return _eval_delivery_expectation(g, node)
+    if (node, RDF.type, _ICM.PropertyExpectation) in g:
+        return _eval_property_expectation(g, node)
 
     # ── Unknown/opaque — pass silently (no evaluable content) ────────────────
     return True, []
@@ -585,12 +645,21 @@ def _flat_scan(g: rdflib.Graph) -> list[dict]:
     for node in g.subjects(RDF.type, _SET.setforAll):
         _, conds = _eval_for_all(g, node)
         conditions.extend(conds)
+    for node in g.subjects(RDF.type, _ICM.DeliveryExpectation):
+        _, conds = _eval_delivery_expectation(g, node)
+        conditions.extend(conds)
+    for node in g.subjects(RDF.type, _ICM.PropertyExpectation):
+        _, conds = _eval_property_expectation(g, node)
+        conditions.extend(conds)
     return conditions
 
 
 # ── Reporting helpers ─────────────────────────────────────────────────────────
 
-_SET_COND_TYPES = frozenset(["setIsMember", "setIntersectsWith", "setIncludedIn", "setForAll"])
+_SIMPLE_FAIL_TYPES = frozenset([
+    "setIsMember", "setIntersectsWith", "setIncludedIn", "setForAll",
+    "DeliveryExpectation", "PropertyExpectation",
+])
 
 
 def _fail_label(c: dict) -> str:
@@ -602,7 +671,7 @@ def _fail_label(c: dict) -> str:
         pred = c.get("predicate", "?")
         obj  = c.get("object", "?")
         return f"{t}({pred}, {obj}): FAIL"
-    if t in _SET_COND_TYPES:
+    if t in _SIMPLE_FAIL_TYPES:
         return f"{t}: FAIL"
     bnd = c["bound"] if "bound" in c else f"{c.get('lower')}…{c.get('upper')}"
     return f"{c.get('observed')} {c['operator']} {bnd}: FAIL"
