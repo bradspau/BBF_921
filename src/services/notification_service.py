@@ -35,7 +35,24 @@ class EventType:
     INTENT_SPEC_STATUS_CHANGE         = "IntentSpecificationStatusChangeEvent"
 
 
+# Per TMF921 OAS event payload models: the resource is nested under a
+# resource-type key inside "event", not placed directly in "event".
+_EVENT_RESOURCE_KEY: dict[str, str] = {
+    EventType.INTENT_CREATE:                      "intent",
+    EventType.INTENT_DELETE:                      "intent",
+    EventType.INTENT_STATUS_CHANGE:               "intent",
+    EventType.INTENT_ATTRIBUTE_VALUE_CHANGE:      "intent",
+    EventType.INTENT_REPORT_CREATE:               "intentReport",
+    EventType.INTENT_REPORT_DELETE:               "intentReport",
+    EventType.INTENT_SPEC_CREATE:                 "intentSpecification",
+    EventType.INTENT_SPEC_DELETE:                 "intentSpecification",
+    EventType.INTENT_SPEC_ATTRIBUTE_VALUE_CHANGE: "intentSpecification",
+    EventType.INTENT_SPEC_STATUS_CHANGE:          "intentSpecification",
+}
+
+
 def _build_payload(event_type: str, resource: dict[str, Any]) -> dict[str, Any]:
+    resource_key = _EVENT_RESOURCE_KEY.get(event_type, "resource")
     return {
         "eventId":       str(uuid.uuid4()),
         "correlationId": str(uuid.uuid4()),
@@ -43,7 +60,7 @@ def _build_payload(event_type: str, resource: dict[str, Any]) -> dict[str, Any]:
         "eventType":     event_type,
         "@type":         event_type,
         "@baseType":     "Event",
-        "event":         resource,
+        "event":         {resource_key: resource},
     }
 
 

@@ -106,6 +106,7 @@ from __future__ import annotations
 
 import logging
 import math
+from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
 from operator import ge, gt, le, lt, eq
 from typing import Callable
@@ -286,11 +287,24 @@ def _compute_math_functions(g: rdflib.Graph) -> None:
 
 # ── Metric resolution ─────────────────────────────────────────────────────────
 
+def _parse_timestamp(raw: str) -> datetime:
+    """Parse an ISO-8601 timestamp to a timezone-aware datetime for ordering.
+
+    Handles both the 'Z' suffix written by observation_store and the '+00:00'
+    form that RDFLib normalises to on round-trip (per CLAUDE.md gotchas).
+    Falls back to datetime.min on parse failure so malformed timestamps sort last.
+    """
+    try:
+        return datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        return datetime.min.replace(tzinfo=timezone.utc)
+
+
 def _latest_observation_value(
     g: rdflib.Graph, metric_uri: rdflib.term.Node
 ) -> rdflib.term.Literal | None:
     """Return the rdf:value of the most recent met:Observation for a metric."""
-    best_time: str | None = None
+    best_dt: datetime | None = None
     best_val = None
     for obs in g.subjects(RDF.type, _MET.Observation):
         if (obs, _MET.observedMetric, metric_uri) not in g:
@@ -299,9 +313,9 @@ def _latest_observation_value(
         if val is None:
             continue
         obtained_at = g.value(obs, _MET.obtainedAt)
-        t = str(obtained_at) if obtained_at is not None else ""
-        if best_time is None or t > best_time:
-            best_time = t
+        dt = _parse_timestamp(str(obtained_at)) if obtained_at is not None else datetime.min.replace(tzinfo=timezone.utc)
+        if best_dt is None or dt > best_dt:
+            best_dt = dt
             best_val = val
     return best_val
 
@@ -907,6 +921,15 @@ def _eval_node(g: rdflib.Graph, node: rdflib.term.Node) -> tuple[bool, list[dict
         all_conds: list[dict] = []
         for r in child_results:
             all_conds.extend(r[1])
+        # When the list is non-empty but every child was opaque (no conditions
+        # produced), the expression is unevaluable — fail rather than silently
+        # pass. Empty-list combinators (e.g. noneOf rdf:nil) are vacuously valid
+        # and skip this guard.
+        if items and not all_conds:
+            return False, [{"type": "opaqueChildren",
+                            "count": len(items),
+                            "error": "no evaluable conditions in children",
+                            "passed": False}]
         return passed, all_conds
 
     # ── log:match (subject predicate object) ─────────────────────────────────
@@ -1067,6 +1090,7 @@ _SIMPLE_FAIL_TYPES = frozenset([
     "validityOf", "validityGate",
     "GuaranteeReport",
     "valueSelected", "chosenAny", "usedVocabularyFor",
+    "opaqueChildren",
 ])
 
 

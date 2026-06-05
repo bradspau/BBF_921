@@ -290,8 +290,10 @@ class TestNotificationPayloadConformance:
             f"@baseType mismatch: got {p['@baseType']!r}"
         )
         assert "event" in p, "Missing event field"
-        assert p["event"]["id"] == "conform-001"
-        assert p["event"]["@type"] == "Intent"
+        # Per TMF921 OAS: resource is nested under resource-type key inside "event"
+        assert "intent" in p["event"], "Missing 'intent' key inside event"
+        assert p["event"]["intent"]["id"] == "conform-001"
+        assert p["event"]["intent"]["@type"] == "Intent"
 
 
 class TestHealthEndpoint:

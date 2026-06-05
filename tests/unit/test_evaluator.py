@@ -315,6 +315,22 @@ class TestEvaluateTurtleConditions:
         assert "No quantity conditions" in result["reason"]
         assert result["conditions"] == []
 
+    def test_combinator_wrapping_only_unknown_operators_is_degraded(self):
+        """Regression BBF_921-35f: a log:allOf wrapping only unknown/opaque nodes
+        must not silently return Fulfilled — it has no evaluable conditions."""
+        turtle = (
+            "@prefix log: <http://tio.models.tmforum.org/tio/v3.6.0/LogicalOperators/> .\n"
+            "@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .\n"
+            "<urn:root> log:allOf (<urn:unknown1> <urn:unknown2>) .\n"
+            "<urn:unknown1> a <urn:SomeUnsupportedType> .\n"
+            "<urn:unknown2> a <urn:SomeUnsupportedType> .\n"
+        )
+        result = evaluate_turtle_conditions(turtle)
+        assert result["intentHandlingState"] == "Degraded"
+        assert result["conditions"], "Expected at least one opaqueChildren condition"
+        assert result["conditions"][0]["type"] == "opaqueChildren"
+        assert result["conditions"][0]["passed"] is False
+
     def test_invalid_turtle_returns_degraded(self):
         result = evaluate_turtle_conditions("this is !! not valid turtle")
         assert result["intentHandlingState"] == "Degraded"
@@ -586,6 +602,32 @@ class TestMetricResolution:
             "    met:obtainedAt \"2026-06-04T10:00:00Z\"^^xsd:dateTime .\n"
         )
         result = evaluate_turtle_conditions(turtle)
+        assert result["intentHandlingState"] == "Fulfilled"
+        assert result["conditions"][0]["observed"] == 120.0
+
+    def test_pattern_a_latest_observation_wins_mixed_z_and_offset(self):
+        """Regression BBF_921-qlk: 'Z' and '+00:00' timestamps must compare as
+        equal-offset datetimes, not as strings ('Z' > '+' lexicographically
+        would invert the ordering and pick the stale observation)."""
+        turtle = (
+            _MET_PREFIXES
+            + "<urn:test:cond> a quan:quanatLeast ;\n"
+            "    rdf:first <urn:test:metric> ;\n"
+            "    rdf:rest  [ rdf:first <urn:test:bound> ] .\n"
+            "<urn:test:bound> rdf:value \"100\"^^xsd:decimal .\n"
+            # Older observation written with '+00:00' (RDFLib round-trip form)
+            "<urn:test:obs_old> a met:Observation ;\n"
+            "    met:observedMetric <urn:test:metric> ;\n"
+            "    rdf:value \"80\"^^xsd:decimal ;\n"
+            "    met:obtainedAt \"2026-06-04T09:00:00+00:00\"^^xsd:dateTime .\n"
+            # Newer observation written with 'Z' (observation_store form)
+            "<urn:test:obs_new> a met:Observation ;\n"
+            "    met:observedMetric <urn:test:metric> ;\n"
+            "    rdf:value \"120\"^^xsd:decimal ;\n"
+            "    met:obtainedAt \"2026-06-04T10:00:00Z\"^^xsd:dateTime .\n"
+        )
+        result = evaluate_turtle_conditions(turtle)
+        # Must pick obs_new (120 >= 100 → Fulfilled), not obs_old (80 < 100 → Degraded)
         assert result["intentHandlingState"] == "Fulfilled"
         assert result["conditions"][0]["observed"] == 120.0
 

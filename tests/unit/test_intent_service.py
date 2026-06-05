@@ -442,7 +442,37 @@ class TestNotificationService:
         assert "eventId" in p
         assert "correlationId" in p
         assert "eventTime" in p
-        assert p["event"] == {"id": "z", "@type": "Intent"}
+        # Per TMF921 OAS: resource is nested under resource-type key inside "event"
+        assert p["event"] == {"intent": {"id": "z", "@type": "Intent"}}
+
+    @pytest.mark.asyncio
+    async def test_payload_resource_key_by_event_type(self, client: FusekiClient) -> None:
+        """Regression BBF_921-3q8: each event category nests resource under the
+        correct TMF key — 'intent', 'intentReport', or 'intentSpecification'."""
+        from src.services.notification_service import _build_payload
+
+        cases = [
+            (EventType.INTENT_CREATE,                      "intent"),
+            (EventType.INTENT_DELETE,                      "intent"),
+            (EventType.INTENT_STATUS_CHANGE,               "intent"),
+            (EventType.INTENT_ATTRIBUTE_VALUE_CHANGE,      "intent"),
+            (EventType.INTENT_REPORT_CREATE,               "intentReport"),
+            (EventType.INTENT_REPORT_DELETE,               "intentReport"),
+            (EventType.INTENT_SPEC_CREATE,                 "intentSpecification"),
+            (EventType.INTENT_SPEC_DELETE,                 "intentSpecification"),
+            (EventType.INTENT_SPEC_ATTRIBUTE_VALUE_CHANGE, "intentSpecification"),
+            (EventType.INTENT_SPEC_STATUS_CHANGE,          "intentSpecification"),
+        ]
+        resource = {"id": "r1", "@type": "T"}
+        for event_type, expected_key in cases:
+            payload = _build_payload(event_type, resource)
+            assert "event" in payload, f"{event_type}: missing 'event'"
+            assert expected_key in payload["event"], (
+                f"{event_type}: expected key '{expected_key}' in event, got {list(payload['event'].keys())}"
+            )
+            assert payload["event"][expected_key] is resource, (
+                f"{event_type}: resource not placed under '{expected_key}'"
+            )
 
     @respx.mock
     @pytest.mark.asyncio
