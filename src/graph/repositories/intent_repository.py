@@ -292,11 +292,13 @@ class IntentRepository(BaseRepository):
             expr_uri = self._expr_uri(intent_id)
             expr_type = expr.get("@type", "JsonLdExpression")
             delete_lines += [
+                f"        <{uri}> tmf:hasExpression ?exprUri .",
                 "        ?exprUri rdf:type ?oldExprType .",
                 "        ?exprUri tmf:expressionIri ?oldIri .",
                 "        ?exprUri tmf:expressionValue ?oldExprVal .",
             ]
             insert_lines += [
+                f"        <{uri}> tmf:hasExpression <{expr_uri}> .",
                 f"        <{expr_uri}> rdf:type tmf:{e(expr_type)} .",
             ]
             if expr.get("iri"):
@@ -309,12 +311,12 @@ class IntentRepository(BaseRepository):
                     f"        <{expr_uri}> tmf:expressionValue \"{e(raw)}\"^^xsd:string ."
                 )
             where_lines += [
-                f"        OPTIONAL {{",
+                "        OPTIONAL {",
                 f"            <{uri}> tmf:hasExpression ?exprUri .",
-                f"            OPTIONAL {{ ?exprUri rdf:type ?oldExprType }}",
-                f"            OPTIONAL {{ ?exprUri tmf:expressionIri ?oldIri }}",
-                f"            OPTIONAL {{ ?exprUri tmf:expressionValue ?oldExprVal }}",
-                f"        }}",
+                "            OPTIONAL { ?exprUri rdf:type ?oldExprType }",
+                "            OPTIONAL { ?exprUri tmf:expressionIri ?oldIri }",
+                "            OPTIONAL { ?exprUri tmf:expressionValue ?oldExprVal }",
+                "        }",
             ]
 
         sparql = (

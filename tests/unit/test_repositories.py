@@ -399,6 +399,43 @@ class TestIntentRepository:
         assert result is not None
 
     @respx.mock
+    async def test_update_expression_patch_writes_has_expression_link(self):
+        """Regression: PATCH adding/replacing an expression must always emit
+        the tmf:hasExpression link so get_by_id() and the handler can find it."""
+        from urllib.parse import unquote_plus
+
+        captured: list[str] = []
+
+        def capture_update(request):
+            # Body is form-encoded: "update=<url-encoded-sparql>"
+            raw = request.content.decode()
+            sparql = unquote_plus(raw.removeprefix("update="))
+            captured.append(sparql)
+            return _sparql_ok()
+
+        row = _intent_binding()
+        respx.post(UPDATE_URL).mock(side_effect=capture_update)
+        respx.post(SPARQL_URL).mock(return_value=httpx.Response(200, json=_bindings([row])))
+        async with FusekiClient(FUSEKI, DATASET) as client:
+            repo = IntentRepository(client)
+            await repo.update(
+                INTENT_ID,
+                {"expression": {
+                    "@type": "TurtleExpression",
+                    "iri": "http://new-iri",
+                    "expressionValue": "@prefix ex: <urn:ex:> . ex:a a ex:B .",
+                }},
+                "2024-06-01T00:00:00+00:00",
+            )
+        assert captured, "UPDATE was never called"
+        sparql = captured[0]
+        # The INSERT block must include the hasExpression link so the intent
+        # node points to the expression node after the PATCH — both when an
+        # expression already existed AND when it did not.
+        insert_block = sparql[sparql.index("INSERT"):sparql.index("WHERE")]
+        assert "tmf:hasExpression" in insert_block
+
+    @respx.mock
     async def test_delete_existing_intent(self):
         respx.post(SPARQL_URL).mock(return_value=httpx.Response(200, json=_ask(True)))
         respx.post(UPDATE_URL).mock(return_value=_sparql_ok())
