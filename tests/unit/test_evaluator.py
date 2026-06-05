@@ -16,8 +16,15 @@ import pytest
 import respx
 import httpx
 
+import rdflib
+from rdflib.namespace import RDF, RDFS
+
 from src.graph.store import FusekiClient
-from src.handler.evaluator import evaluate_intent, evaluate_turtle_conditions
+from src.handler.evaluator import (
+    evaluate_intent,
+    evaluate_turtle_conditions,
+    _derive_ext_types,
+)
 from src.handler.dispatcher import dispatch_evaluation, schedule_evaluation
 
 FUSEKI    = "http://localhost:3030"
@@ -2064,6 +2071,157 @@ class TestMfMapping:
             "<urn:t:inp> rdf:value \"2\"^^xsd:decimal .\n"
         )
         result = evaluate_turtle_conditions(turtle)
+        assert result["intentHandlingState"] == "Degraded"
+
+
+# ── Extension type-propagation (tmf_ext_eval.rules Python port) ──────────────
+
+_UT  = rdflib.Namespace("http://tio.models.tmforum.org/tio/v3.6.0/Utility/")
+_PRE = rdflib.Namespace("http://tio.models.tmforum.org/tio/v3.6.0/PreferenceOfHandlingOutcomes/")
+_PBI = rdflib.Namespace("http://tio.models.tmforum.org/tio/v3.6.0/ProposalBestIntent/")
+_ICM_NS = rdflib.Namespace("http://tio.models.tmforum.org/tio/v3.6.0/IntentCommonModel/")
+
+_EXT_PFX = """\
+@prefix ut:   <http://tio.models.tmforum.org/tio/v3.6.0/Utility/> .
+@prefix pre:  <http://tio.models.tmforum.org/tio/v3.6.0/PreferenceOfHandlingOutcomes/> .
+@prefix pbi:  <http://tio.models.tmforum.org/tio/v3.6.0/ProposalBestIntent/> .
+@prefix icm:  <http://tio.models.tmforum.org/tio/v3.6.0/IntentCommonModel/> .
+@prefix rdf:  <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+"""
+
+
+def _parse(turtle: str) -> rdflib.Graph:
+    g = rdflib.Graph()
+    g.parse(data=turtle, format="turtle")
+    return g
+
+
+class TestDeriveExtTypesUtility:
+    """Utility type propagation rules."""
+
+    def test_ututility_property_infers_utility_information(self):
+        """(?X ut:ututility ?U) → (?U rdf:type ut:utUtilityInformation)"""
+        g = _parse(_EXT_PFX + "<urn:x> ut:ututility <urn:u> .\n")
+        _derive_ext_types(g)
+        assert (rdflib.URIRef("urn:u"), RDF.type, _UT.utUtilityInformation) in g
+
+    def test_utility_information_infers_icm_information(self):
+        """(?U rdf:type ut:utUtilityInformation) → (?U rdf:type icm:icmInformation)"""
+        g = _parse(_EXT_PFX + "<urn:u> a ut:utUtilityInformation .\n")
+        _derive_ext_types(g)
+        assert (rdflib.URIRef("urn:u"), RDF.type, _ICM_NS.icmInformation) in g
+
+    def test_utility_via_property_chains_to_icm_information(self):
+        """Property chain: ututility → utUtilityInformation → icmInformation."""
+        g = _parse(_EXT_PFX + "<urn:x> ut:ututility <urn:u> .\n")
+        _derive_ext_types(g)
+        assert (rdflib.URIRef("urn:u"), RDF.type, _ICM_NS.icmInformation) in g
+
+    def test_utility_profile_property_infers_profile_type(self):
+        """(?X ut:ututilityProfile ?P) → (?P rdf:type ut:utUtilityProfile)"""
+        g = _parse(_EXT_PFX + "<urn:x> ut:ututilityProfile <urn:p> .\n")
+        _derive_ext_types(g)
+        assert (rdflib.URIRef("urn:p"), RDF.type, _UT.utUtilityProfile) in g
+
+
+class TestDeriveExtTypesPreference:
+    """Preference type propagation rules."""
+
+    def test_prepreference_property_infers_preference_type(self):
+        """(?X pre:prepreference ?P) → (?P rdf:type pre:prePreference)"""
+        g = _parse(_EXT_PFX + "<urn:x> pre:prepreference <urn:p> .\n")
+        _derive_ext_types(g)
+        assert (rdflib.URIRef("urn:p"), RDF.type, _PRE.prePreference) in g
+
+    def test_prejudgementrequest_property_infers_judgement_type(self):
+        """(?X pre:prejudgementRequest ?J) → (?J rdf:type pre:preJudgementRequest)"""
+        g = _parse(_EXT_PFX + "<urn:x> pre:prejudgementRequest <urn:j> .\n")
+        _derive_ext_types(g)
+        assert (rdflib.URIRef("urn:j"), RDF.type, _PRE.preJudgementRequest) in g
+
+    def test_judgement_request_infers_container(self):
+        """(?J rdf:type pre:preJudgementRequest) → (?J rdf:type rdfs:Container)"""
+        g = _parse(_EXT_PFX + "<urn:j> a pre:preJudgementRequest .\n")
+        _derive_ext_types(g)
+        assert (rdflib.URIRef("urn:j"), RDF.type, RDFS.Container) in g
+
+    def test_judgement_request_via_property_chains_to_container(self):
+        """Property chain: prejudgementRequest → preJudgementRequest → rdfs:Container."""
+        g = _parse(_EXT_PFX + "<urn:x> pre:prejudgementRequest <urn:j> .\n")
+        _derive_ext_types(g)
+        assert (rdflib.URIRef("urn:j"), RDF.type, RDFS.Container) in g
+
+
+class TestDeriveExtTypesProposal:
+    """Proposal/BestIntent type propagation rules."""
+
+    def test_pbiproposal_property_infers_best_proposal_report(self):
+        """(?X pbi:pbiproposal ?R) → (?R rdf:type pbi:pbiBestProposalReport)"""
+        g = _parse(_EXT_PFX + "<urn:x> pbi:pbiproposal <urn:r> .\n")
+        _derive_ext_types(g)
+        assert (rdflib.URIRef("urn:r"), RDF.type, _PBI.pbiBestProposalReport) in g
+
+    def test_best_proposal_report_infers_expectation_report(self):
+        """(?R rdf:type pbi:pbiBestProposalReport) → (?R rdf:type icm:icmExpectationReport)"""
+        g = _parse(_EXT_PFX + "<urn:r> a pbi:pbiBestProposalReport .\n")
+        _derive_ext_types(g)
+        assert (rdflib.URIRef("urn:r"), RDF.type, _ICM_NS.icmExpectationReport) in g
+
+    def test_pbiproposal_chains_to_expectation_report(self):
+        """Property chain: pbiproposal → pbiBestProposalReport → icmExpectationReport."""
+        g = _parse(_EXT_PFX + "<urn:x> pbi:pbiproposal <urn:r> .\n")
+        _derive_ext_types(g)
+        assert (rdflib.URIRef("urn:r"), RDF.type, _ICM_NS.icmExpectationReport) in g
+
+    def test_pbiproposed_property_infers_proposal_type(self):
+        """(?R pbi:pbiproposed ?P) → (?P rdf:type pbi:pbiProposal)"""
+        g = _parse(_EXT_PFX + "<urn:r> pbi:pbiproposed <urn:p> .\n")
+        _derive_ext_types(g)
+        assert (rdflib.URIRef("urn:p"), RDF.type, _PBI.pbiProposal) in g
+
+    def test_best_proposal_expectation_infers_reporting_expectation(self):
+        """(?R rdf:type pbi:pbiBestProposalExpectation) → (?R rdf:type icm:icmReportingExpectation)"""
+        g = _parse(_EXT_PFX + "<urn:r> a pbi:pbiBestProposalExpectation .\n")
+        _derive_ext_types(g)
+        assert (rdflib.URIRef("urn:r"), RDF.type, _ICM_NS.icmReportingExpectation) in g
+
+
+class TestExtTypesViaEvaluateTurtleConditions:
+    """Ext-ontology nodes don't break evaluate_turtle_conditions and pass silently."""
+
+    def test_utility_node_in_expression_passes_silently(self):
+        """Utility node in an otherwise empty expression passes (opaque)."""
+        turtle = (
+            _EXT_PFX
+            + "@prefix quan: <http://tio.models.tmforum.org/tio/v3.6.0/QuantityOntology/> .\n"
+            "@prefix rdf:  <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .\n"
+            "@prefix xsd:  <http://www.w3.org/2001/XMLSchema#> .\n"
+            "<urn:cond> a quan:quanatLeast ;\n"
+            "    rdf:first <urn:v> ; rdf:rest [ rdf:first <urn:b> ] .\n"
+            "<urn:v> rdf:value \"5\"^^xsd:decimal .\n"
+            "<urn:b> rdf:value \"3\"^^xsd:decimal .\n"
+            "<urn:intent> ut:ututility <urn:util> .\n"
+        )
+        result = evaluate_turtle_conditions(turtle)
+        # Quantity condition (5 >= 3) should still evaluate correctly
+        assert result["intentHandlingState"] == "Fulfilled"
+
+    def test_preference_node_in_expression_does_not_break_evaluation(self):
+        """Preference nodes alongside quantity conditions don't interfere."""
+        turtle = (
+            _EXT_PFX
+            + "@prefix quan: <http://tio.models.tmforum.org/tio/v3.6.0/QuantityOntology/> .\n"
+            "@prefix rdf:  <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .\n"
+            "@prefix xsd:  <http://www.w3.org/2001/XMLSchema#> .\n"
+            "<urn:cond> a quan:quanatLeast ;\n"
+            "    rdf:first <urn:v> ; rdf:rest [ rdf:first <urn:b> ] .\n"
+            "<urn:v> rdf:value \"2\"^^xsd:decimal .\n"
+            "<urn:b> rdf:value \"4\"^^xsd:decimal .\n"
+            "<urn:intent> pre:prepreference <urn:pref> .\n"
+        )
+        result = evaluate_turtle_conditions(turtle)
+        # 2 < 4 → Degraded; preference node doesn't interfere
         assert result["intentHandlingState"] == "Degraded"
 
 

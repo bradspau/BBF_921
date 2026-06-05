@@ -66,6 +66,11 @@ Validity evaluation (tmf_validity_eval):
                       fail immediately (validityGate condition), regardless of the
                       condition's own value.
 
+Extension type-propagation (tmf_ext_eval rules Python port):
+  _derive_ext_types materialises inferred rdf:type triples for Utility,
+  Preference, and Proposal nodes so that SPARQL queries and future evaluators
+  see correct supertypes without needing Jena inference in Fuseki.
+
 Guarantee evaluation (tmf_guarantee_eval rules Python port):
   Pre-processing: _derive_guarantee_states walks ig:igGuaranteeReport nodes and
                   materialises ig:igstate by matching ig:igGuaranteeAccepted or
@@ -125,6 +130,9 @@ _IG   = rdflib.Namespace("http://tio.models.tmforum.org/tio/v3.6.0/IntentGuarant
 _IMO  = rdflib.Namespace("http://tio.models.tmforum.org/tio/v3.6.0/IntentManagementOntology/")
 _INSP = rdflib.Namespace("http://tio.models.tmforum.org/tio/v3.6.0/IntentSpecification/")
 _MF   = rdflib.Namespace("http://tio.models.tmforum.org/tio/v3.6.0/MathFunctions/")
+_UT   = rdflib.Namespace("http://tio.models.tmforum.org/tio/v3.6.0/Utility/")
+_PRE  = rdflib.Namespace("http://tio.models.tmforum.org/tio/v3.6.0/PreferenceOfHandlingOutcomes/")
+_PBI  = rdflib.Namespace("http://tio.models.tmforum.org/tio/v3.6.0/ProposalBestIntent/")
 
 # (rdf_type, comparator, display_symbol) — two-argument quantity pattern
 _TWO_ARG_OPS: list[tuple[rdflib.URIRef, object, str]] = [
@@ -400,6 +408,58 @@ def _derive_guarantee_states(g: rdflib.Graph) -> None:
                 if (event, _IMO.imoeventIssuedFor, intent) in g:
                     g.set((report, _IG.igstate, _IG.igGuaranteeStateDegraded))
                     break
+
+
+# ── Extension type-propagation (tmf_ext_eval) ────────────────────────────────
+
+def _derive_ext_types(g: rdflib.Graph) -> None:
+    """
+    Apply tmf_ext_eval rules: materialise inferred rdf:type triples for Utility,
+    Preference, and Proposal/BestIntent nodes.
+
+    Rules ported (all are property-triggered or subclass-propagation):
+
+    Utility:
+      (?X ut:ututility ?U)          → (?U rdf:type ut:utUtilityInformation)
+      (?X ut:ututilityProfile ?P)   → (?P rdf:type ut:utUtilityProfile)
+      (?U rdf:type ut:utUtilityInformation) → (?U rdf:type icm:icmInformation)
+
+    Preference:
+      (?X pre:prepreference ?P)       → (?P rdf:type pre:prePreference)
+      (?X pre:prejudgementRequest ?J) → (?J rdf:type pre:preJudgementRequest)
+      (?J rdf:type pre:preJudgementRequest) → (?J rdf:type rdfs:Container)
+
+    Proposal/BestIntent:
+      (?X pbi:pbiproposal ?R)              → (?R rdf:type pbi:pbiBestProposalReport)
+      (?R rdf:type pbi:pbiBestProposalReport) → (?R rdf:type icm:icmExpectationReport)
+      (?R pbi:pbiproposed ?P)              → (?P rdf:type pbi:pbiProposal)
+      (?R rdf:type pbi:pbiBestProposalExpectation) → (?R rdf:type icm:icmReportingExpectation)
+    """
+    # ── Utility ───────────────────────────────────────────────────────────────
+    for _, u in list(g.subject_objects(_UT.ututility)):
+        g.add((u, RDF.type, _UT.utUtilityInformation))
+    for _, p in list(g.subject_objects(_UT.ututilityProfile)):
+        g.add((p, RDF.type, _UT.utUtilityProfile))
+    for u in list(g.subjects(RDF.type, _UT.utUtilityInformation)):
+        g.add((u, RDF.type, _ICM.icmInformation))
+
+    # ── Preference ────────────────────────────────────────────────────────────
+    for _, p in list(g.subject_objects(_PRE.prepreference)):
+        g.add((p, RDF.type, _PRE.prePreference))
+    for _, j in list(g.subject_objects(_PRE.prejudgementRequest)):
+        g.add((j, RDF.type, _PRE.preJudgementRequest))
+    for j in list(g.subjects(RDF.type, _PRE.preJudgementRequest)):
+        g.add((j, RDF.type, RDFS.Container))
+
+    # ── Proposal / BestIntent ─────────────────────────────────────────────────
+    for _, r in list(g.subject_objects(_PBI.pbiproposal)):
+        g.add((r, RDF.type, _PBI.pbiBestProposalReport))
+    for r in list(g.subjects(RDF.type, _PBI.pbiBestProposalReport)):
+        g.add((r, RDF.type, _ICM.icmExpectationReport))
+    for _, p in list(g.subject_objects(_PBI.pbiproposed)):
+        g.add((p, RDF.type, _PBI.pbiProposal))
+    for r in list(g.subjects(RDF.type, _PBI.pbiBestProposalExpectation)):
+        g.add((r, RDF.type, _ICM.icmReportingExpectation))
 
 
 # ── RDF list iteration ────────────────────────────────────────────────────────
@@ -1054,6 +1114,7 @@ def evaluate_turtle_conditions(turtle_str: str) -> dict:
     _compute_math_functions(g)
     _resolve_validity_chains(g)
     _derive_guarantee_states(g)
+    _derive_ext_types(g)
 
     roots = _find_evaluation_roots(g)
 
