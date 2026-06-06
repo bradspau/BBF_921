@@ -69,10 +69,6 @@ class IntentService:
             "lifecycleStatus": "ACKNOWLEDGED",
             "@type":          intent_type,
         }
-        # Strip fields callers should not set
-        for f in ("id", "href", "creationDate", "lastUpdate"):
-            if f in data:
-                payload[f] = payload[f]  # server value wins
 
         result = await self._repo.create(payload)
         self._notifications.schedule(EventType.INTENT_CREATE, result)

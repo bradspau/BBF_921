@@ -216,13 +216,13 @@ def _compute_math_functions(g: rdflib.Graph) -> None:
         x = _rdf_decimal(g, g.value(fn, _MF.mfinput))
         if x is None:
             continue
-        k  = _mf_param(g, fn, _MF.mfk,  Decimal("1"))
-        l  = _mf_param(g, fn, _MF.mfl,  Decimal("1"))
-        c  = _mf_param(g, fn, _MF.mfc,  Decimal("0"))
-        x0 = _mf_param(g, fn, _MF.mfx0, Decimal("0"))
+        k     = _mf_param(g, fn, _MF.mfk,  Decimal("1"))
+        scale = _mf_param(g, fn, _MF.mfl,  Decimal("1"))
+        c     = _mf_param(g, fn, _MF.mfc,  Decimal("0"))
+        x0    = _mf_param(g, fn, _MF.mfx0, Decimal("0"))
         try:
             exp_val = Decimal(str(math.exp(float(-k * (x - x0)))))
-            result = l / (Decimal("1") + exp_val) + c
+            result = scale / (Decimal("1") + exp_val) + c
         except (ZeroDivisionError, OverflowError, InvalidOperation):
             continue
         g.set((fn, RDF.value, rdflib.Literal(result, datatype=XSD.decimal)))
@@ -243,14 +243,14 @@ def _compute_math_functions(g: rdflib.Graph) -> None:
             coeffs.append(v if v is not None else Decimal("0"))
         if not coeffs:
             continue
-        l = _mf_param(g, fn, _MF.mfl, Decimal("1"))
-        c = _mf_param(g, fn, _MF.mfc, Decimal("0"))
+        scale = _mf_param(g, fn, _MF.mfl, Decimal("1"))
+        c     = _mf_param(g, fn, _MF.mfc, Decimal("0"))
         try:
             # Avoid Decimal("0") ** 0 which raises InvalidOperation; i=0 term is always coeff.
             poly_val: Decimal = Decimal("0")
             for i, coeff in enumerate(coeffs):
                 poly_val += coeff if i == 0 else coeff * (x ** i)
-            result = l * poly_val + c
+            result = scale * poly_val + c
         except (InvalidOperation, OverflowError):
             continue
         g.set((fn, RDF.value, rdflib.Literal(result, datatype=XSD.decimal)))
@@ -518,7 +518,7 @@ def _eval_two_arg(
     except InvalidOperation:
         return {"type": type_name, "operator": sym, "error": "non-numeric value", "passed": False}
     ok = bool(cmp_op(obs, bnd))  # type: ignore[operator]
-    return {"type": type_name, "operator": sym, "observed": float(obs), "bound": float(bnd), "passed": ok}
+    return {"type": type_name, "operator": sym, "observed": obs, "bound": bnd, "passed": ok}
 
 
 def _eval_range(g: rdflib.Graph, node: rdflib.term.Node) -> dict:
@@ -542,7 +542,7 @@ def _eval_range(g: rdflib.Graph, node: rdflib.term.Node) -> dict:
     except InvalidOperation:
         return {"type": "quaninRange", "operator": "<=<=", "error": "non-numeric value", "passed": False}
     ok = bool(lo <= val <= hi)
-    return {"type": "quaninRange", "operator": "<=<=", "observed": float(val), "lower": float(lo), "upper": float(hi), "passed": ok}
+    return {"type": "quaninRange", "operator": "<=<=", "observed": val, "lower": lo, "upper": hi, "passed": ok}
 
 
 # ── Logical leaf evaluators ───────────────────────────────────────────────────
@@ -613,18 +613,6 @@ def _eval_match_statement(g: rdflib.Graph, list_node: rdflib.term.Node) -> tuple
 def _container_members(g: rdflib.Graph, container: rdflib.term.Node) -> frozenset:
     """All rdfs:member items of a container node."""
     return frozenset(g.objects(container, RDFS.member))
-
-
-def _substitute_node(
-    g: rdflib.Graph,
-    old: rdflib.term.Node,
-    new: rdflib.term.Node,
-) -> rdflib.Graph:
-    """Return a copy of g with every subject/object occurrence of old replaced by new."""
-    ng = rdflib.Graph()
-    for s, p, o in g:
-        ng.add((new if s == old else s, p, new if o == old else o))
-    return ng
 
 
 def _eval_is_member(g: rdflib.Graph, node: rdflib.term.Node) -> tuple[bool, list[dict]]:
@@ -721,10 +709,25 @@ def _eval_for_all(g: rdflib.Graph, node: rdflib.term.Node) -> tuple[bool, list[d
         # Vacuously true: no member can violate the condition.
         return True, [{"type": "setForAll", "member_count": 0, "passed": True}]
 
+    # Split g's triples once: those referencing member_var (to be substituted)
+    # and the rest (shared unchanged across all member iterations).  This avoids
+    # re-scanning the full graph on every iteration (was O(N×|g|); now O(|g|+N×k)).
+    var_triples:     list[tuple] = []
+    non_var_triples: list[tuple] = []
+    for s, p, o in g:
+        if s == member_var or o == member_var:
+            var_triples.append((s, p, o))
+        else:
+            non_var_triples.append((s, p, o))
+
     all_conds: list[dict] = []
     all_passed = True
     for member in members:
-        g_sub = _substitute_node(g, member_var, member)
+        g_sub = rdflib.Graph()
+        for triple in non_var_triples:
+            g_sub.add(triple)
+        for s, p, o in var_triples:
+            g_sub.add((member if s == member_var else s, p, member if o == member_var else o))
         cond_node = member if condition_orig == member_var else condition_orig
         m_passed, m_conds = _eval_node(g_sub, cond_node)
         if not m_passed:

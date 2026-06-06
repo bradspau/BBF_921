@@ -329,7 +329,7 @@ class IntentRepository(BaseRepository):
             f"    }}\n}}\n"
             f"WHERE {{\n    GRAPH <{graph_uri}> {{\n"
             + "\n".join(where_lines) + "\n"
-            f"    }}\n}}"
+            "    }}\n}}"
         )
         await self._client.update(sparql)
         return await self.get_by_id(intent_id)

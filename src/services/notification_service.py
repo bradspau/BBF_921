@@ -10,9 +10,6 @@ import asyncio
 import logging
 import uuid
 from datetime import datetime, timezone
-
-# Strong references prevent the event loop's weak-ref from GC'ing tasks mid-run.
-_background_tasks: set[asyncio.Task] = set()
 from typing import Any
 
 import httpx
@@ -20,6 +17,9 @@ import httpx
 from src.graph.repositories.hub_repository import HubRepository
 
 logger = logging.getLogger(__name__)
+
+# Strong references prevent the event loop's weak-ref from GC'ing tasks mid-run.
+_background_tasks: set[asyncio.Task] = set()
 
 # All supported TMF921A event types
 class EventType:

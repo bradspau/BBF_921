@@ -1862,7 +1862,7 @@ class TestMfLogistic:
         assert result["intentHandlingState"] == "Fulfilled"
         c = result["conditions"][0]
         assert c["passed"] is True
-        assert abs(c["observed"] - 0.5) < 1e-6
+        assert abs(float(c["observed"]) - 0.5) < 1e-6
 
     def test_large_positive_x_approaches_max(self):
         """x=10, L=1, k=1 → logistic ≈ 0.9999; bound 0.99 → Fulfilled."""
@@ -1896,7 +1896,7 @@ class TestMfLogistic:
         result = evaluate_turtle_conditions(turtle)
         assert result["intentHandlingState"] == "Fulfilled"
         c = result["conditions"][0]
-        assert abs(c["observed"] - 2.0) < 1e-6
+        assert abs(float(c["observed"]) - 2.0) < 1e-6
 
     def test_large_negative_x_approaches_zero(self):
         """x=-10 → logistic ≈ 0.00005; bound 0.001 → Degraded (0.00005 < 0.001)."""
@@ -1951,7 +1951,7 @@ class TestMfPoly:
         )
         result = evaluate_turtle_conditions(turtle)
         assert result["intentHandlingState"] == "Fulfilled"
-        assert abs(result["conditions"][0]["observed"] - 5.0) < 1e-6
+        assert abs(float(result["conditions"][0]["observed"]) - 5.0) < 1e-6
 
     def test_linear_polynomial(self):
         """Coefficients [1, 2] → f(x) = 1 + 2*3 = 7; bound 6 → Fulfilled."""
@@ -1967,7 +1967,7 @@ class TestMfPoly:
         )
         result = evaluate_turtle_conditions(turtle)
         assert result["intentHandlingState"] == "Fulfilled"
-        assert abs(result["conditions"][0]["observed"] - 7.0) < 1e-6
+        assert abs(float(result["conditions"][0]["observed"]) - 7.0) < 1e-6
 
     def test_quadratic_polynomial(self):
         """[0, 0, 1] → f(x) = x² ; x=3 → 9; bound 8 → Fulfilled."""
@@ -1984,7 +1984,7 @@ class TestMfPoly:
         )
         result = evaluate_turtle_conditions(turtle)
         assert result["intentHandlingState"] == "Fulfilled"
-        assert abs(result["conditions"][0]["observed"] - 9.0) < 1e-6
+        assert abs(float(result["conditions"][0]["observed"]) - 9.0) < 1e-6
 
     def test_stretch_and_offset(self):
         """[1] (constant 1), l=3, c=2 → f = 3*1 + 2 = 5; bound 4 → Fulfilled."""
@@ -2003,7 +2003,7 @@ class TestMfPoly:
         )
         result = evaluate_turtle_conditions(turtle)
         assert result["intentHandlingState"] == "Fulfilled"
-        assert abs(result["conditions"][0]["observed"] - 5.0) < 1e-6
+        assert abs(float(result["conditions"][0]["observed"]) - 5.0) < 1e-6
 
     def test_poly_below_bound_degrades(self):
         """f(x)=2 with bound 3 → Degraded."""
@@ -2051,7 +2051,7 @@ class TestMfMapping:
         )
         result = evaluate_turtle_conditions(turtle)
         assert result["intentHandlingState"] == "Fulfilled"
-        assert abs(result["conditions"][0]["observed"] - 10.0) < 1e-6
+        assert abs(float(result["conditions"][0]["observed"]) - 10.0) < 1e-6
 
     def test_no_matching_entry_skips(self):
         """Input 5 not in any mapping entry → rdf:value not set → Degraded."""
@@ -2084,7 +2084,7 @@ class TestMfMapping:
         )
         result = evaluate_turtle_conditions(turtle)
         assert result["intentHandlingState"] == "Fulfilled"
-        assert abs(result["conditions"][0]["observed"] - 7.0) < 1e-6
+        assert abs(float(result["conditions"][0]["observed"]) - 7.0) < 1e-6
 
     def test_first_matching_entry_wins(self):
         """Two entries both match input 1 (impossible in practice but logic uses first)."""
@@ -2101,7 +2101,7 @@ class TestMfMapping:
         )
         result = evaluate_turtle_conditions(turtle)
         assert result["intentHandlingState"] == "Fulfilled"
-        assert abs(result["conditions"][0]["observed"] - 5.0) < 1e-6
+        assert abs(float(result["conditions"][0]["observed"]) - 5.0) < 1e-6
 
     def test_missing_map_skips(self):
         """No mf:mfmap → rdf:value not set → Degraded."""

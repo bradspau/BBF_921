@@ -8,9 +8,6 @@ IntentReport via the internal IntentReportRepository.
 from __future__ import annotations
 
 import asyncio
-
-# Strong references prevent the event loop's weak-ref from GC'ing tasks mid-run.
-_background_tasks: set[asyncio.Task] = set()
 import logging
 import uuid
 from datetime import datetime, timezone
@@ -23,6 +20,9 @@ from src.handler.state_writer import write_handler_state
 from src.services.notification_service import EventType, NotificationService
 
 logger = logging.getLogger(__name__)
+
+# Strong references prevent the event loop's weak-ref from GC'ing tasks mid-run.
+_background_tasks: set[asyncio.Task] = set()
 
 _BASE_HREF = "http://tmforum.org/tmf-api/intentManagement/v5"
 

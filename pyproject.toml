@@ -14,6 +14,9 @@ pythonpath = ["."]
 testpaths = ["tests"]
 python_files = ["test_*.py", "*_test.py", "*_config.py"]
 
+[tool.ruff.lint]
+per-file-ignores = { "src/api/schemas/models/*.py" = ["F821"], "src/api/schemas/generated.py" = ["F821"] }
+
 [tool.coverage.run]
 source = ["src"]
 omit = ["src/api/schemas/models/*", "src/api/schemas/generated.py"]

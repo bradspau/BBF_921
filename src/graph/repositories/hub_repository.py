@@ -106,7 +106,6 @@ class HubRepository(BaseRepository):
         exists = await self._client.ask(ask)
         if not exists:
             return False
-        e = self._esc
         sparql = (
             f"{PREFIXES}\n"
             f"DELETE WHERE {{\n"
