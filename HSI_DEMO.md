@@ -25,6 +25,31 @@ graph, then walks the TIO expression tree to produce `Fulfilled` or `Degraded`.
 
 ---
 
+## Start with a clean Fuseki store
+
+Fuseki uses TDB2 persistent storage. If you have previously run the seeder or an
+older version of the API, stale IntentReports from before Phase 5 may already be in
+the store. Always wipe and restart before running this demo to avoid seeing old data.
+
+### Docker (recommended — wipes volumes on restart)
+
+```bash
+sudo docker compose down -v   # -v removes named volumes → clean Fuseki store
+sudo docker compose up --build
+```
+
+### Dev server (wipe Fuseki TDB2 manually)
+
+Stop both the API and Fuseki, then delete the Fuseki data directory before
+restarting:
+
+```bash
+sudo rm -rf /tmp/fuseki-data   # adjust to your fuseki --loc path
+# then restart Fuseki and the API as normal
+```
+
+---
+
 ## Prerequisites
 
 ### Option A — Docker (recommended)
@@ -128,6 +153,9 @@ curl -s "http://localhost:8000/tmf-api/intentManagement/v5/intent/$INTENT_ID/int
   | python3 -m json.tool
 ```
 
+> Reports are returned **newest first** (`ORDER BY DESC(creationDate)`).
+> The first item in the array is always the latest evaluation result.
+
 Expected `intentHandlingState`: **`Degraded`**
 
 ```json
@@ -142,6 +170,12 @@ Expected `intentHandlingState`: **`Degraded`**
 
 The `intentHandlingReason` lists the five metric conditions that failed because no
 `met:Observation` records exist for them yet.
+
+> **If you see `"No intentHandlingState inferred from expression"`** — Fuseki contains a
+> stale report written by an older version of the evaluator (pre-Phase 5). Stop the
+> stack, wipe the volumes (`docker compose down -v`), and start from the beginning.
+> The ordering fix in `intent_report_repository.py` ensures the newest report is
+> always index `[0]`, but stale data from old code requires a clean restart.
 
 ---
 

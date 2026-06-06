@@ -195,7 +195,7 @@ class IntentReportRepository(BaseRepository):
             f"        }}\n"
             f"    }}\n"
             f"}}\n"
-            f"ORDER BY ?id\n"
+            f"ORDER BY DESC(?created)\n"
             f"LIMIT {limit} OFFSET {offset}"
         )
         rows = await self._client.query(list_sparql)
