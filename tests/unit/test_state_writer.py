@@ -152,6 +152,29 @@ class TestBuildHandlerStateTurtle:
         assert float(str(g.value(cond0, _IMO.lowerBound)))    == 10.0
         assert float(str(g.value(cond0, _IMO.upperBound)))    == 100.0
 
+    def test_non_quantity_condition_no_observed_key_does_not_raise(self):
+        """Regression: logMatch / DeliveryExpectation conditions have no 'observed' or
+        'bound' key. _condition_block must not raise KeyError for these types."""
+        result = {
+            "intentHandlingState": "Fulfilled",
+            "reason": None,
+            "conditions": [
+                {"type": "logMatch", "subject": "urn:s", "predicate": "urn:p",
+                 "object": "urn:o", "passed": True},
+                {"type": "DeliveryExpectation", "deliveryType": "urn:T",
+                 "member_count": 1, "passed": True},
+                {"type": "setForAll", "member_count": 3, "passed": True},
+            ],
+        }
+        # Must not raise
+        turtle = build_handler_state_turtle(INTENT_ID, result, _TS)
+        g = _parse(turtle)
+        # All three conditions are written; none have observedValue
+        for i in range(3):
+            cond = handler_state_condition_uri(INTENT_ID, i)
+            assert g.value(cond, _IMO.conditionPassed) is not None
+            assert g.value(cond, _IMO.observedValue) is None
+
     def test_structural_error_condition_has_error_predicate(self):
         g = _parse(build_handler_state_turtle(INTENT_ID, _STRUCT_ERROR_RESULT, _TS))
         cond0 = handler_state_condition_uri(INTENT_ID, 0)

@@ -105,11 +105,14 @@ def _condition_block(intent_id: str, index: int, c: dict, timestamp: str) -> str
             ("imo:lowerBound",    f'"{c["lower"]}"^^xsd:decimal'),
             ("imo:upperBound",    f'"{c["upper"]}"^^xsd:decimal'),
         ]
-    else:
+    elif "observed" in c:
+        # Two-argument quantity conditions (quanatLeast, quansmaller, etc.)
         pairs += [
             ("imo:observedValue", f'"{c["observed"]}"^^xsd:decimal'),
             ("imo:boundValue",    f'"{c["bound"]}"^^xsd:decimal'),
         ]
+    # Non-quantity conditions (logMatch, DeliveryExpectation, setForAll, etc.)
+    # carry no numeric operands — only conditionPassed (and error if present).
 
     pairs.append(("imo:evaluatedAt", f'"{timestamp}"^^xsd:dateTime'))
     return _po_block(str(handler_state_condition_uri(intent_id, index)), pairs)
@@ -146,9 +149,8 @@ async def write_handler_state(
     """
     graph_uri = str(handler_state_graph_uri(intent_id))
     timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    turtle = build_handler_state_turtle(intent_id, result, timestamp)
-
     try:
+        turtle = build_handler_state_turtle(intent_id, result, timestamp)
         await client.gsp_put(graph_uri, turtle)
         logger.debug(
             "write_handler_state: %s conditions for intent %s → %s",
