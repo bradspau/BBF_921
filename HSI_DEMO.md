@@ -334,25 +334,24 @@ graph as before, so the result will match the most recently submitted values.
 The `handlerState` graph lives in the **`tmf921`** dataset (the same one the API uses).
 `tmf921-eval` is a separate in-memory dataset — it does not hold handler state.
 
-The OODA working-memory graph is visible at (replace the fake UUID with your actual `$INTENT_ID`):
+Fetch the raw Turtle from the shell (`$INTENT_ID` is already set from Step 1):
 
-```
-http://localhost:3030/tmf921/data?graph=http://tmforum.org/api/v5/intents/xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx/handlerState
+```bash
+curl -s "http://localhost:3030/tmf921/data?graph=http://tmforum.org/api/v5/intents/$INTENT_ID/handlerState"
 ```
 
 Or via SPARQL — open the Fuseki UI at `http://localhost:3030`, select the **`tmf921`** dataset,
-choose the **Query** tab, and paste the query below.
+choose the **Query** tab. Run this command first to print a ready-to-paste query with your UUID
+already substituted:
 
-**Before pasting, substitute your UUID** (the value of `$INTENT_ID` from Step 1) for every
-occurrence of `INTENT_ID` in the graph URI:
-
-```sparql
+```bash
+cat <<EOF
 PREFIX imo: <http://tio.models.tmforum.org/tio/v3.6.0/IntentManagementOntology/>
 PREFIX quan: <http://tio.models.tmforum.org/tio/v3.6.0/QuantityOntology/>
 
 SELECT ?type ?observed ?bound ?passed
 WHERE {
-  GRAPH <http://tmforum.org/api/v5/intents/xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx/handlerState> {
+  GRAPH <http://tmforum.org/api/v5/intents/$INTENT_ID/handlerState> {
     ?intent imo:hasConditionResult ?c .
     ?c a ?type ;
        imo:conditionPassed ?passed .
@@ -360,14 +359,10 @@ WHERE {
     OPTIONAL { ?c imo:boundValue ?bound }
   }
 }
+EOF
 ```
 
-The `xxxxxxxx-…` placeholder is intentionally wrong — the query returns nothing until you
-replace it with your actual UUID. If you're unsure of the UUID, run:
-
-```bash
-echo $INTENT_ID
-```
+Copy the output and paste it into the Fuseki Query tab.
 
 To list every named graph currently in the `tmf921` dataset:
 
