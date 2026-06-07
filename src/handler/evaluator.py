@@ -1099,7 +1099,7 @@ _SIMPLE_FAIL_TYPES = frozenset([
 
 def _fail_label(c: dict) -> str:
     if "error" in c:
-        return c["error"]
+        return f"{c.get('type', '?')}: {c['error']}"
     t = c["type"]
     if t in ("logMatch", "logMatchAll", "logMatchAny", "logMatchNone",
              "logMatchOne", "logMatchStatement"):

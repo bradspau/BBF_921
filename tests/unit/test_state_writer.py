@@ -61,7 +61,7 @@ _ERROR_RESULT = {
 
 _STRUCT_ERROR_RESULT = {
     "intentHandlingState": "Degraded",
-    "reason": "Conditions not met: missing rdf:value",
+    "reason": "Conditions not met: quanatLeast: missing rdf:value",
     "conditions": [
         {"type": "quanatLeast", "operator": ">=", "error": "missing rdf:value", "passed": False},
     ],
