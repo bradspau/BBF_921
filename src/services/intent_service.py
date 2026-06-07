@@ -73,7 +73,7 @@ class IntentService:
         result = await self._repo.create(payload)
         self._notifications.schedule(EventType.INTENT_CREATE, result)
         if self._report_repo is not None:
-            schedule_evaluation(intent_id, self._repo._client, self._report_repo, self._hub_repo)
+            schedule_evaluation(intent_id, self._repo._client, self._report_repo, self._hub_repo, self._repo)
         return result
 
     # ── Read ──────────────────────────────────────────────────────────────────
@@ -144,7 +144,7 @@ class IntentService:
             self._notifications.schedule(EventType.INTENT_ATTRIBUTE_VALUE_CHANGE, updated)
 
         if self._report_repo is not None:
-            schedule_evaluation(intent_id, self._repo._client, self._report_repo, self._hub_repo)
+            schedule_evaluation(intent_id, self._repo._client, self._report_repo, self._hub_repo, self._repo)
 
         return updated
 

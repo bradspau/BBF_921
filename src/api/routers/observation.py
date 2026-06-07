@@ -16,6 +16,7 @@ from pydantic import BaseModel
 
 from src.api.deps import get_fuseki_client, get_hub_repo, get_intent_report_repo
 from src.graph.repositories.hub_repository import HubRepository
+from src.graph.repositories.intent_repository import IntentRepository
 from src.graph.repositories.intent_report_repository import IntentReportRepository
 from src.graph.store import FusekiClient
 from src.handler.dispatcher import schedule_evaluation
@@ -46,7 +47,7 @@ async def create_observation(
     obs_id = await write_observation(
         intent_id, body.metricUri, body.value, client, body.obtainedAt
     )
-    schedule_evaluation(intent_id, client, report_repo, hub_repo)
+    schedule_evaluation(intent_id, client, report_repo, hub_repo, IntentRepository(client))
     return {
         "observationId": obs_id,
         "intentId": intent_id,

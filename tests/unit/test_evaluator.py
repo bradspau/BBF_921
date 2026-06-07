@@ -25,6 +25,7 @@ from src.handler.evaluator import (
     evaluate_turtle_conditions,
     _derive_ext_types,
 )
+import src.handler.dispatcher as _disp_mod
 from src.handler.dispatcher import dispatch_evaluation, schedule_evaluation
 
 FUSEKI    = "http://localhost:3030"
@@ -4184,6 +4185,125 @@ class TestDispatchEvaluation:
         report_data = mock_report_repo.create.call_args[0][1]
         assert report_data["intentHandlingState"] == "Degraded"
         assert "timeout" in (report_data.get("intentHandlingReason") or "")
+
+    async def test_auto_activates_when_fulfilled_and_degraded(self):
+        """Flow 2: Fulfilled eval on DEGRADED intent triggers DEGRADED→ACTIVE transition."""
+        mock_client = MagicMock(spec=FusekiClient)
+        mock_report_repo = MagicMock()
+        mock_report_repo.create = AsyncMock(return_value={"id": "r1"})
+        mock_hub_repo = MagicMock()
+        mock_intent_repo = MagicMock()
+        mock_intent_repo.get_by_id = AsyncMock(return_value={"lifecycleStatus": "DEGRADED"})
+        mock_intent_repo.update = AsyncMock(return_value={"id": INTENT_ID, "lifecycleStatus": "ACTIVE"})
+        mock_intent_repo.write_state_change = AsyncMock()
+
+        with (
+            patch("src.handler.dispatcher.evaluate_intent",
+                  AsyncMock(return_value={"intentHandlingState": "Fulfilled", "reason": None})),
+            patch("src.handler.dispatcher.write_handler_state", new_callable=AsyncMock),
+        ):
+            await dispatch_evaluation(
+                INTENT_ID, mock_client, mock_report_repo, mock_hub_repo, mock_intent_repo
+            )
+
+        mock_intent_repo.update.assert_called_once()
+        update_kwargs = mock_intent_repo.update.call_args
+        updates = update_kwargs[0][1]
+        assert updates["lifecycleStatus"] == "ACTIVE"
+        mock_intent_repo.write_state_change.assert_called_once()
+        sc_kwargs = mock_intent_repo.write_state_change.call_args[1]
+        assert sc_kwargs["from_status"] == "DEGRADED"
+        assert sc_kwargs["to_status"] == "ACTIVE"
+
+    async def test_no_auto_activate_when_fulfilled_and_active(self):
+        """Flow 2: Fulfilled eval on ACTIVE intent does NOT change status."""
+        mock_client = MagicMock(spec=FusekiClient)
+        mock_report_repo = MagicMock()
+        mock_report_repo.create = AsyncMock(return_value={"id": "r1"})
+        mock_hub_repo = MagicMock()
+        mock_intent_repo = MagicMock()
+        mock_intent_repo.get_by_id = AsyncMock(return_value={"lifecycleStatus": "ACTIVE"})
+        mock_intent_repo.update = AsyncMock()
+
+        with (
+            patch("src.handler.dispatcher.evaluate_intent",
+                  AsyncMock(return_value={"intentHandlingState": "Fulfilled", "reason": None})),
+            patch("src.handler.dispatcher.write_handler_state", new_callable=AsyncMock),
+        ):
+            await dispatch_evaluation(
+                INTENT_ID, mock_client, mock_report_repo, mock_hub_repo, mock_intent_repo
+            )
+
+        mock_intent_repo.update.assert_not_called()
+
+    async def test_no_auto_activate_when_degraded_eval(self):
+        """Flow 2: Degraded (not Fulfilled) eval on DEGRADED intent does NOT auto-activate."""
+        mock_client = MagicMock(spec=FusekiClient)
+        mock_report_repo = MagicMock()
+        mock_report_repo.create = AsyncMock(return_value={"id": "r1"})
+        mock_hub_repo = MagicMock()
+        mock_intent_repo = MagicMock()
+        mock_intent_repo.update = AsyncMock()
+
+        with (
+            patch("src.handler.dispatcher.evaluate_intent",
+                  AsyncMock(return_value={"intentHandlingState": "Degraded", "reason": None})),
+            patch("src.handler.dispatcher.write_handler_state", new_callable=AsyncMock),
+        ):
+            await dispatch_evaluation(
+                INTENT_ID, mock_client, mock_report_repo, mock_hub_repo, mock_intent_repo
+            )
+
+        mock_intent_repo.update.assert_not_called()
+
+    async def test_no_auto_activate_without_intent_repo(self):
+        """When intent_repo is not passed, no auto-activation even on Fulfilled."""
+        mock_client = MagicMock(spec=FusekiClient)
+        mock_report_repo = MagicMock()
+        mock_report_repo.create = AsyncMock(return_value={"id": "r1"})
+        mock_hub_repo = MagicMock()
+
+        with (
+            patch("src.handler.dispatcher.evaluate_intent",
+                  AsyncMock(return_value={"intentHandlingState": "Fulfilled", "reason": None})),
+            patch("src.handler.dispatcher.write_handler_state", new_callable=AsyncMock),
+            patch("src.handler.dispatcher._try_auto_activate", new_callable=AsyncMock) as mock_activate,
+        ):
+            await dispatch_evaluation(INTENT_ID, mock_client, mock_report_repo, mock_hub_repo)
+
+        mock_activate.assert_not_called()
+
+    async def test_auto_activate_skips_when_lock_held(self):
+        """_try_auto_activate returns early without calling get_by_id when lock is already held."""
+        import asyncio as _asyncio
+        mock_intent_repo = MagicMock()
+        mock_intent_repo.get_by_id = AsyncMock()
+        mock_hub_repo = MagicMock()
+
+        lock = _asyncio.Lock()
+        _disp_mod._transition_locks["lock-held-test-id"] = lock
+        await lock.acquire()
+        try:
+            await _disp_mod._try_auto_activate("lock-held-test-id", mock_intent_repo, mock_hub_repo)
+        finally:
+            lock.release()
+            _disp_mod._transition_locks.pop("lock-held-test-id", None)
+
+        mock_intent_repo.get_by_id.assert_not_called()
+
+    async def test_auto_activate_skips_when_update_returns_none(self):
+        """_try_auto_activate exits cleanly when update() returns None (intent deleted mid-flight)."""
+        mock_intent_repo = MagicMock()
+        mock_intent_repo.get_by_id = AsyncMock(return_value={"lifecycleStatus": "DEGRADED"})
+        mock_intent_repo.update = AsyncMock(return_value=None)
+        mock_intent_repo.write_state_change = AsyncMock()
+        mock_hub_repo = MagicMock()
+
+        await _disp_mod._try_auto_activate(
+            "update-none-test-id", mock_intent_repo, mock_hub_repo
+        )
+
+        mock_intent_repo.write_state_change.assert_not_called()
 
 
 class TestScheduleEvaluation:
