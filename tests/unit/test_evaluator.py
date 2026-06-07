@@ -309,6 +309,48 @@ class TestEvaluateTurtleConditions:
     def test_quaninRange_fail_below(self):
         assert evaluate_turtle_conditions(_RANGE_TURTLE.format(val="5", lo="10", hi="100"))["intentHandlingState"] == "Degraded"
 
+    # ── short-name aliases (QuantityOntology.ttl: quan:atLeast, etc.) ─────────
+
+    def test_atLeast_pass(self):
+        assert evaluate_turtle_conditions(self._make_turtle("atLeast", "100", "100"))["intentHandlingState"] == "Fulfilled"
+
+    def test_atLeast_fail(self):
+        assert evaluate_turtle_conditions(self._make_turtle("atLeast", "99", "100"))["intentHandlingState"] == "Degraded"
+
+    def test_atMost_pass(self):
+        assert evaluate_turtle_conditions(self._make_turtle("atMost", "5", "10"))["intentHandlingState"] == "Fulfilled"
+
+    def test_atMost_fail(self):
+        assert evaluate_turtle_conditions(self._make_turtle("atMost", "11", "10"))["intentHandlingState"] == "Degraded"
+
+    def test_greater_pass(self):
+        assert evaluate_turtle_conditions(self._make_turtle("greater", "101", "100"))["intentHandlingState"] == "Fulfilled"
+
+    def test_greater_equal_is_fail(self):
+        assert evaluate_turtle_conditions(self._make_turtle("greater", "100", "100"))["intentHandlingState"] == "Degraded"
+
+    def test_smaller_pass(self):
+        assert evaluate_turtle_conditions(self._make_turtle("smaller", "24", "25"))["intentHandlingState"] == "Fulfilled"
+
+    def test_smaller_equal_is_fail(self):
+        assert evaluate_turtle_conditions(self._make_turtle("smaller", "25", "25"))["intentHandlingState"] == "Degraded"
+
+    def test_exactly_pass(self):
+        assert evaluate_turtle_conditions(self._make_turtle("exactly", "42", "42"))["intentHandlingState"] == "Fulfilled"
+
+    def test_exactly_fail(self):
+        assert evaluate_turtle_conditions(self._make_turtle("exactly", "42", "43"))["intentHandlingState"] == "Degraded"
+
+    def test_inRange_pass(self):
+        assert evaluate_turtle_conditions(
+            _RANGE_TURTLE.replace("quan:quaninRange", "quan:inRange").format(val="50", lo="10", hi="100")
+        )["intentHandlingState"] == "Fulfilled"
+
+    def test_inRange_fail_above(self):
+        assert evaluate_turtle_conditions(
+            _RANGE_TURTLE.replace("quan:quaninRange", "quan:inRange").format(val="200", lo="10", hi="100")
+        )["intentHandlingState"] == "Degraded"
+
     def test_no_conditions_returns_degraded(self):
         result = evaluate_turtle_conditions("@prefix : <http://example.org/> .")
         assert result["intentHandlingState"] == "Degraded"
@@ -2114,6 +2156,854 @@ class TestMfMapping:
         )
         result = evaluate_turtle_conditions(turtle)
         assert result["intentHandlingState"] == "Degraded"
+
+
+# ── quan: binary arithmetic functions ────────────────────────────────────────
+
+# Scaffold: arithmetic fn node used as rdf:first of a quanatLeast condition.
+# The fn's rdf:value is materialised by _compute_math_functions so the
+# comparator sees the computed quantity as the observed value.
+_ARITH_PFX = (
+    "@prefix quan: <http://tio.models.tmforum.org/tio/v3.6.0/QuantityOntology/> .\n"
+    "@prefix rdf:  <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .\n"
+    "@prefix xsd:  <http://www.w3.org/2001/XMLSchema#> .\n"
+)
+_ARITH_COND_WRAP = (
+    "<urn:t:cond> a quan:quanatLeast ;\n"
+    "    rdf:first <urn:t:fn> ;\n"
+    "    rdf:rest  [ rdf:first <urn:t:bnd> ] .\n"
+    "<urn:t:bnd> rdf:value \"{bnd}\"^^xsd:decimal .\n"
+)
+
+
+def _arith_turtle(fn_type: str, a: str, b: str, bnd: str) -> str:
+    return (
+        _ARITH_PFX
+        + _ARITH_COND_WRAP.format(bnd=bnd)
+        + f"<urn:t:fn> a quan:{fn_type} ;\n"
+        "    rdf:first <urn:t:a> ;\n"
+        "    rdf:rest  [ rdf:first <urn:t:b> ] .\n"
+        f"<urn:t:a> rdf:value \"{a}\"^^xsd:decimal .\n"
+        f"<urn:t:b> rdf:value \"{b}\"^^xsd:decimal .\n"
+    )
+
+
+class TestQuanArithmetic:
+    """quan:sum, difference, division, multiplication — intermediate value nodes."""
+
+    def test_sum_pass(self):
+        """3 + 4 = 7; bound 7 (>=) → Fulfilled."""
+        assert evaluate_turtle_conditions(_arith_turtle("sum", "3", "4", "7"))["intentHandlingState"] == "Fulfilled"
+
+    def test_sum_fail(self):
+        """3 + 4 = 7; bound 8 (>=) → Degraded."""
+        assert evaluate_turtle_conditions(_arith_turtle("sum", "3", "4", "8"))["intentHandlingState"] == "Degraded"
+
+    def test_difference_pass(self):
+        """10 - 3 = 7; bound 6 (>=) → Fulfilled."""
+        assert evaluate_turtle_conditions(_arith_turtle("difference", "10", "3", "6"))["intentHandlingState"] == "Fulfilled"
+
+    def test_difference_fail(self):
+        """10 - 3 = 7; bound 8 (>=) → Degraded."""
+        assert evaluate_turtle_conditions(_arith_turtle("difference", "10", "3", "8"))["intentHandlingState"] == "Degraded"
+
+    def test_difference_negative_result(self):
+        """3 - 10 = -7; bound -8 (>=) → Fulfilled."""
+        assert evaluate_turtle_conditions(_arith_turtle("difference", "3", "10", "-8"))["intentHandlingState"] == "Fulfilled"
+
+    def test_division_pass(self):
+        """10 / 4 = 2.5; bound 2 (>=) → Fulfilled."""
+        assert evaluate_turtle_conditions(_arith_turtle("division", "10", "4", "2"))["intentHandlingState"] == "Fulfilled"
+
+    def test_division_fail(self):
+        """10 / 4 = 2.5; bound 3 (>=) → Degraded."""
+        assert evaluate_turtle_conditions(_arith_turtle("division", "10", "4", "3"))["intentHandlingState"] == "Degraded"
+
+    def test_division_by_zero_skips(self):
+        """Division by zero — fn skipped, no rdf:value materialised → Degraded."""
+        result = evaluate_turtle_conditions(_arith_turtle("division", "10", "0", "1"))
+        assert result["intentHandlingState"] == "Degraded"
+
+    def test_multiplication_pass(self):
+        """3 * 4 = 12; bound 12 (>=) → Fulfilled."""
+        assert evaluate_turtle_conditions(_arith_turtle("multiplication", "3", "4", "12"))["intentHandlingState"] == "Fulfilled"
+
+    def test_multiplication_fail(self):
+        """3 * 4 = 12; bound 13 (>=) → Degraded."""
+        assert evaluate_turtle_conditions(_arith_turtle("multiplication", "3", "4", "13"))["intentHandlingState"] == "Degraded"
+
+    def test_missing_arg_skips(self):
+        """fn with no rdf:rest → args missing → fn skipped → Degraded."""
+        turtle = (
+            _ARITH_PFX
+            + _ARITH_COND_WRAP.format(bnd="1")
+            + "<urn:t:fn> a quan:sum ;\n"
+            "    rdf:first <urn:t:a> .\n"
+            "<urn:t:a> rdf:value \"5\"^^xsd:decimal .\n"
+        )
+        assert evaluate_turtle_conditions(turtle)["intentHandlingState"] == "Degraded"
+
+
+# ── quan: n-ary aggregation functions ────────────────────────────────────────
+
+def _nary_turtle(fn_type: str, values: list[str], bnd: str) -> str:
+    """Build Turtle with a quan:<fn_type> node whose args are an rdf:list of value nodes."""
+    arg_nodes = [f"<urn:t:a{i}>" for i in range(len(values))]
+    # Build the rdf:list as a chain of blank nodes hanging off the fn node.
+    # fn rdf:first arg0 ; rdf:rest [ rdf:first arg1 ; rdf:rest [ ... rdf:nil ] ] .
+    def _chain(nodes: list[str]) -> str:
+        if not nodes:
+            return "rdf:nil"
+        head, *tail = nodes
+        if not tail:
+            return f"[ rdf:first {head} ; rdf:rest rdf:nil ]"
+        return f"[ rdf:first {head} ; rdf:rest {_chain(tail)} ]"
+
+    head_node = arg_nodes[0] if arg_nodes else "rdf:nil"
+    rest_chain = _chain(arg_nodes[1:]) if len(arg_nodes) > 1 else "rdf:nil"
+
+    lines = (
+        _ARITH_PFX
+        + _ARITH_COND_WRAP.format(bnd=bnd)
+        + f"<urn:t:fn> a quan:{fn_type} ;\n"
+        f"    rdf:first {head_node} ;\n"
+        f"    rdf:rest  {rest_chain} .\n"
+    )
+    for i, val in enumerate(values):
+        lines += f"<urn:t:a{i}> rdf:value \"{val}\"^^xsd:decimal .\n"
+    return lines
+
+
+class TestQuanNaryAggregation:
+    """quan:mean, median, greatest, smallest — n-arg rdf:list aggregation."""
+
+    # ── mean ─────────────────────────────────────────────────────────────────
+
+    def test_mean_pass(self):
+        """mean(2, 4, 6) = 4; bound 4 (>=) → Fulfilled."""
+        assert evaluate_turtle_conditions(
+            _nary_turtle("mean", ["2", "4", "6"], "4")
+        )["intentHandlingState"] == "Fulfilled"
+
+    def test_mean_fail(self):
+        """mean(2, 4, 6) = 4; bound 5 (>=) → Degraded."""
+        assert evaluate_turtle_conditions(
+            _nary_turtle("mean", ["2", "4", "6"], "5")
+        )["intentHandlingState"] == "Degraded"
+
+    def test_mean_single_arg(self):
+        """mean(7) = 7; bound 7 (>=) → Fulfilled."""
+        assert evaluate_turtle_conditions(
+            _nary_turtle("mean", ["7"], "7")
+        )["intentHandlingState"] == "Fulfilled"
+
+    def test_mean_empty_skips(self):
+        """mean with no args → no rdf:value materialised → Degraded."""
+        turtle = (
+            _ARITH_PFX
+            + _ARITH_COND_WRAP.format(bnd="1")
+            + "<urn:t:fn> a quan:mean .\n"
+        )
+        assert evaluate_turtle_conditions(turtle)["intentHandlingState"] == "Degraded"
+
+    # ── median ────────────────────────────────────────────────────────────────
+
+    def test_median_odd_count(self):
+        """median(1, 3, 5) = 3; bound 3 (>=) → Fulfilled."""
+        assert evaluate_turtle_conditions(
+            _nary_turtle("median", ["1", "3", "5"], "3")
+        )["intentHandlingState"] == "Fulfilled"
+
+    def test_median_even_count(self):
+        """median(2, 4, 6, 8) = (4+6)/2 = 5; bound 5 (>=) → Fulfilled."""
+        assert evaluate_turtle_conditions(
+            _nary_turtle("median", ["2", "4", "6", "8"], "5")
+        )["intentHandlingState"] == "Fulfilled"
+
+    def test_median_even_count_fail(self):
+        """median(2, 4, 6, 8) = 5; bound 6 (>=) → Degraded."""
+        assert evaluate_turtle_conditions(
+            _nary_turtle("median", ["2", "4", "6", "8"], "6")
+        )["intentHandlingState"] == "Degraded"
+
+    # ── greatest ─────────────────────────────────────────────────────────────
+
+    def test_greatest_pass(self):
+        """greatest(3, 7, 2) = 7; bound 7 (>=) → Fulfilled."""
+        assert evaluate_turtle_conditions(
+            _nary_turtle("greatest", ["3", "7", "2"], "7")
+        )["intentHandlingState"] == "Fulfilled"
+
+    def test_greatest_fail(self):
+        """greatest(3, 7, 2) = 7; bound 8 (>=) → Degraded."""
+        assert evaluate_turtle_conditions(
+            _nary_turtle("greatest", ["3", "7", "2"], "8")
+        )["intentHandlingState"] == "Degraded"
+
+    def test_greatest_negative_values(self):
+        """greatest(-5, -1, -3) = -1; bound -2 (>=) → Fulfilled."""
+        assert evaluate_turtle_conditions(
+            _nary_turtle("greatest", ["-5", "-1", "-3"], "-2")
+        )["intentHandlingState"] == "Fulfilled"
+
+    # ── smallest ─────────────────────────────────────────────────────────────
+
+    def test_smallest_pass(self):
+        """smallest(3, 7, 2) = 2; bound 2 (>=) → Fulfilled."""
+        assert evaluate_turtle_conditions(
+            _nary_turtle("smallest", ["3", "7", "2"], "2")
+        )["intentHandlingState"] == "Fulfilled"
+
+    def test_smallest_fail(self):
+        """smallest(3, 7, 2) = 2; bound 3 (>=) → Degraded."""
+        assert evaluate_turtle_conditions(
+            _nary_turtle("smallest", ["3", "7", "2"], "3")
+        )["intentHandlingState"] == "Degraded"
+
+    def test_smallest_single_arg(self):
+        """smallest(9) = 9; bound 9 (>=) → Fulfilled."""
+        assert evaluate_turtle_conditions(
+            _nary_turtle("smallest", ["9"], "9")
+        )["intentHandlingState"] == "Fulfilled"
+
+
+# ── quan: set-aggregation functions ──────────────────────────────────────────
+
+_RDFS_PFX = "@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .\n"
+
+
+def _set_agg_turtle(fn_type: str, containers: list[list[str]], bnd: str) -> str:
+    """
+    Build Turtle with a quan:<fn_type> node whose rdf:list points to one or
+    more rdfs:Container nodes, each with rdfs:member value nodes.
+    """
+    lines = _ARITH_PFX + _RDFS_PFX + _ARITH_COND_WRAP.format(bnd=bnd)
+
+    # Build container nodes
+    container_uris = [f"<urn:t:c{ci}>" for ci in range(len(containers))]
+
+    # rdf:list of containers hanging off fn
+    def _chain(uris: list[str]) -> str:
+        if not uris:
+            return "rdf:nil"
+        head, *rest = uris
+        return f"[ rdf:first {head} ; rdf:rest {_chain(rest)} ]"
+
+    head_c = container_uris[0] if container_uris else "rdf:nil"
+    rest_c = _chain(container_uris[1:]) if len(container_uris) > 1 else "rdf:nil"
+
+    lines += (
+        f"<urn:t:fn> a quan:{fn_type} ;\n"
+        f"    rdf:first {head_c} ;\n"
+        f"    rdf:rest  {rest_c} .\n"
+    )
+
+    for ci, members in enumerate(containers):
+        for mi, val in enumerate(members):
+            mem_uri = f"<urn:t:c{ci}m{mi}>"
+            lines += f"{container_uris[ci]} rdfs:member {mem_uri} .\n"
+            lines += f"{mem_uri} rdf:value \"{val}\"^^xsd:decimal .\n"
+
+    return lines
+
+
+class TestQuanSetAggregation:
+    """quan:sumOfSet, multiplicationOfSet, meanOfSet, medianOfSet, greatestInSet, smallestInSet."""
+
+    def test_sumOfSet_single_container(self):
+        """sumOfSet({2,3,5}) = 10; bound 10 (>=) → Fulfilled."""
+        assert evaluate_turtle_conditions(
+            _set_agg_turtle("sumOfSet", [["2", "3", "5"]], "10")
+        )["intentHandlingState"] == "Fulfilled"
+
+    def test_sumOfSet_multi_container(self):
+        """sumOfSet({1,2}, {3,4}) = 10; bound 10 (>=) → Fulfilled."""
+        assert evaluate_turtle_conditions(
+            _set_agg_turtle("sumOfSet", [["1", "2"], ["3", "4"]], "10")
+        )["intentHandlingState"] == "Fulfilled"
+
+    def test_sumOfSet_fail(self):
+        """sumOfSet({2,3,5}) = 10; bound 11 (>=) → Degraded."""
+        assert evaluate_turtle_conditions(
+            _set_agg_turtle("sumOfSet", [["2", "3", "5"]], "11")
+        )["intentHandlingState"] == "Degraded"
+
+    def test_sumOfSet_empty_container_skips(self):
+        """sumOfSet with no members → no vals → no rdf:value → Degraded."""
+        turtle = (
+            _ARITH_PFX + _RDFS_PFX + _ARITH_COND_WRAP.format(bnd="1")
+            + "<urn:t:fn> a quan:sumOfSet ;\n"
+            "    rdf:first <urn:t:c0> ; rdf:rest rdf:nil .\n"
+        )
+        assert evaluate_turtle_conditions(turtle)["intentHandlingState"] == "Degraded"
+
+    def test_multiplicationOfSet_pass(self):
+        """multiplicationOfSet({2,3,4}) = 24; bound 24 (>=) → Fulfilled."""
+        assert evaluate_turtle_conditions(
+            _set_agg_turtle("multiplicationOfSet", [["2", "3", "4"]], "24")
+        )["intentHandlingState"] == "Fulfilled"
+
+    def test_multiplicationOfSet_fail(self):
+        """multiplicationOfSet({2,3,4}) = 24; bound 25 (>=) → Degraded."""
+        assert evaluate_turtle_conditions(
+            _set_agg_turtle("multiplicationOfSet", [["2", "3", "4"]], "25")
+        )["intentHandlingState"] == "Degraded"
+
+    def test_meanOfSet_pass(self):
+        """meanOfSet({10,20,30}) = 20; bound 20 (>=) → Fulfilled."""
+        assert evaluate_turtle_conditions(
+            _set_agg_turtle("meanOfSet", [["10", "20", "30"]], "20")
+        )["intentHandlingState"] == "Fulfilled"
+
+    def test_meanOfSet_multi_container(self):
+        """meanOfSet({4,6}, {8,2}) = mean(4,6,8,2) = 5; bound 5 (>=) → Fulfilled."""
+        assert evaluate_turtle_conditions(
+            _set_agg_turtle("meanOfSet", [["4", "6"], ["8", "2"]], "5")
+        )["intentHandlingState"] == "Fulfilled"
+
+    def test_medianOfSet_odd(self):
+        """medianOfSet({1,3,5}) = 3; bound 3 (>=) → Fulfilled."""
+        assert evaluate_turtle_conditions(
+            _set_agg_turtle("medianOfSet", [["1", "3", "5"]], "3")
+        )["intentHandlingState"] == "Fulfilled"
+
+    def test_medianOfSet_even(self):
+        """medianOfSet({2,4,6,8}) = 5; bound 5 (>=) → Fulfilled."""
+        assert evaluate_turtle_conditions(
+            _set_agg_turtle("medianOfSet", [["2", "4", "6", "8"]], "5")
+        )["intentHandlingState"] == "Fulfilled"
+
+    def test_greatestInSet_pass(self):
+        """greatestInSet({3,9,1}) = 9; bound 9 (>=) → Fulfilled."""
+        assert evaluate_turtle_conditions(
+            _set_agg_turtle("greatestInSet", [["3", "9", "1"]], "9")
+        )["intentHandlingState"] == "Fulfilled"
+
+    def test_greatestInSet_multi_container(self):
+        """greatestInSet({1,2}, {5,3}) = 5; bound 5 (>=) → Fulfilled."""
+        assert evaluate_turtle_conditions(
+            _set_agg_turtle("greatestInSet", [["1", "2"], ["5", "3"]], "5")
+        )["intentHandlingState"] == "Fulfilled"
+
+    def test_smallestInSet_pass(self):
+        """smallestInSet({3,9,1}) = 1; bound 1 (>=) → Fulfilled."""
+        assert evaluate_turtle_conditions(
+            _set_agg_turtle("smallestInSet", [["3", "9", "1"]], "1")
+        )["intentHandlingState"] == "Fulfilled"
+
+    def test_smallestInSet_fail(self):
+        """smallestInSet({3,9,1}) = 1; bound 2 (>=) → Degraded."""
+        assert evaluate_turtle_conditions(
+            _set_agg_turtle("smallestInSet", [["3", "9", "1"]], "2")
+        )["intentHandlingState"] == "Degraded"
+
+
+# ── set: basic algebra, membership/emptiness, temporal, graph-traversal ───────
+
+_SET_PFX = (
+    "@prefix set:  <http://tio.models.tmforum.org/tio/v3.6.0/SetOperators/> .\n"
+    "@prefix quan: <http://tio.models.tmforum.org/tio/v3.6.0/QuantityOntology/> .\n"
+    "@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .\n"
+    "@prefix rdf:  <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .\n"
+    "@prefix xsd:  <http://www.w3.org/2001/XMLSchema#> .\n"
+)
+
+# Wrap a derived container fn node as the container arg to set:setisMember
+# so we can test the constructor output via a boolean leaf condition.
+def _with_ismember(fn_triple: str, resource: str) -> str:
+    """
+    Build Turtle: <urn:t:check> a set:setisMember; rdf:first <resource>;
+    rdf:rest <rest>. <rest> rdfs:member <urn:t:fn>.
+    Plus the fn_triple that defines <urn:t:fn>.
+    """
+    return (
+        _SET_PFX
+        + fn_triple
+        + f"<urn:t:check> a set:setisMember ;\n"
+        f"    rdf:first {resource} ;\n"
+        f"    rdf:rest  <urn:t:rest> .\n"
+        "<urn:t:rest> rdfs:member <urn:t:fn> .\n"
+    )
+
+
+class TestSetAlgebra:
+    """set:union, set:intersection, set:difference — container constructors."""
+
+    def test_union_combines_members(self):
+        """{A,B} ∪ {B,C} = {A,B,C}; A is member → Fulfilled."""
+        turtle = (
+            _SET_PFX
+            + "<urn:t:fn> a set:union ;\n"
+            "    rdf:first <urn:t:c1> ; rdf:rest [ rdf:first <urn:t:c2> ; rdf:rest rdf:nil ] .\n"
+            "<urn:t:c1> rdfs:member <urn:A> , <urn:B> .\n"
+            "<urn:t:c2> rdfs:member <urn:B> , <urn:C> .\n"
+            "<urn:t:check> a set:setisMember ;\n"
+            "    rdf:first <urn:A> ; rdf:rest <urn:t:rest> .\n"
+            "<urn:t:rest> rdfs:member <urn:t:fn> .\n"
+        )
+        assert evaluate_turtle_conditions(turtle)["intentHandlingState"] == "Fulfilled"
+
+    def test_union_member_not_present(self):
+        """{A,B} ∪ {C}; D is not a member → Degraded."""
+        turtle = (
+            _SET_PFX
+            + "<urn:t:fn> a set:union ;\n"
+            "    rdf:first <urn:t:c1> ; rdf:rest [ rdf:first <urn:t:c2> ; rdf:rest rdf:nil ] .\n"
+            "<urn:t:c1> rdfs:member <urn:A> , <urn:B> .\n"
+            "<urn:t:c2> rdfs:member <urn:C> .\n"
+            "<urn:t:check> a set:setisMember ;\n"
+            "    rdf:first <urn:D> ; rdf:rest <urn:t:rest> .\n"
+            "<urn:t:rest> rdfs:member <urn:t:fn> .\n"
+        )
+        assert evaluate_turtle_conditions(turtle)["intentHandlingState"] == "Degraded"
+
+    def test_intersection_common_member(self):
+        """{A,B} ∩ {B,C} = {B}; B is member → Fulfilled."""
+        turtle = (
+            _SET_PFX
+            + "<urn:t:fn> a set:intersection ;\n"
+            "    rdf:first <urn:t:c1> ; rdf:rest [ rdf:first <urn:t:c2> ; rdf:rest rdf:nil ] .\n"
+            "<urn:t:c1> rdfs:member <urn:A> , <urn:B> .\n"
+            "<urn:t:c2> rdfs:member <urn:B> , <urn:C> .\n"
+            "<urn:t:check> a set:setisMember ;\n"
+            "    rdf:first <urn:B> ; rdf:rest <urn:t:rest> .\n"
+            "<urn:t:rest> rdfs:member <urn:t:fn> .\n"
+        )
+        assert evaluate_turtle_conditions(turtle)["intentHandlingState"] == "Fulfilled"
+
+    def test_intersection_non_common_member_absent(self):
+        """{A,B} ∩ {B,C} = {B}; A is not in intersection → Degraded."""
+        turtle = (
+            _SET_PFX
+            + "<urn:t:fn> a set:intersection ;\n"
+            "    rdf:first <urn:t:c1> ; rdf:rest [ rdf:first <urn:t:c2> ; rdf:rest rdf:nil ] .\n"
+            "<urn:t:c1> rdfs:member <urn:A> , <urn:B> .\n"
+            "<urn:t:c2> rdfs:member <urn:B> , <urn:C> .\n"
+            "<urn:t:check> a set:setisMember ;\n"
+            "    rdf:first <urn:A> ; rdf:rest <urn:t:rest> .\n"
+            "<urn:t:rest> rdfs:member <urn:t:fn> .\n"
+        )
+        assert evaluate_turtle_conditions(turtle)["intentHandlingState"] == "Degraded"
+
+    def test_difference_removes_members(self):
+        """{A,B,C} - {B,C} = {A}; A is member → Fulfilled."""
+        turtle = (
+            _SET_PFX
+            + "<urn:t:fn> a set:difference ;\n"
+            "    rdf:first <urn:t:c1> ; rdf:rest [ rdf:first <urn:t:c2> ; rdf:rest rdf:nil ] .\n"
+            "<urn:t:c1> rdfs:member <urn:A> , <urn:B> , <urn:C> .\n"
+            "<urn:t:c2> rdfs:member <urn:B> , <urn:C> .\n"
+            "<urn:t:check> a set:setisMember ;\n"
+            "    rdf:first <urn:A> ; rdf:rest <urn:t:rest> .\n"
+            "<urn:t:rest> rdfs:member <urn:t:fn> .\n"
+        )
+        assert evaluate_turtle_conditions(turtle)["intentHandlingState"] == "Fulfilled"
+
+    def test_difference_removed_member_absent(self):
+        """{A,B,C} - {B,C} = {A}; B is no longer in result → Degraded."""
+        turtle = (
+            _SET_PFX
+            + "<urn:t:fn> a set:difference ;\n"
+            "    rdf:first <urn:t:c1> ; rdf:rest [ rdf:first <urn:t:c2> ; rdf:rest rdf:nil ] .\n"
+            "<urn:t:c1> rdfs:member <urn:A> , <urn:B> , <urn:C> .\n"
+            "<urn:t:c2> rdfs:member <urn:B> , <urn:C> .\n"
+            "<urn:t:check> a set:setisMember ;\n"
+            "    rdf:first <urn:B> ; rdf:rest <urn:t:rest> .\n"
+            "<urn:t:rest> rdfs:member <urn:t:fn> .\n"
+        )
+        assert evaluate_turtle_conditions(turtle)["intentHandlingState"] == "Degraded"
+
+
+class TestSetMembershipEmpty:
+    """set:elementOf and set:empty — leaf boolean conditions."""
+
+    def test_elementOf_member_of_all_pass(self):
+        """A ∈ C1 and A ∈ C2 → Fulfilled."""
+        turtle = (
+            _SET_PFX
+            + "<urn:t:cond> a set:elementOf ;\n"
+            "    rdf:first <urn:A> ;\n"
+            "    rdf:rest  [ rdf:first <urn:t:c1> ; rdf:rest [ rdf:first <urn:t:c2> ; rdf:rest rdf:nil ] ] .\n"
+            "<urn:t:c1> rdfs:member <urn:A> , <urn:B> .\n"
+            "<urn:t:c2> rdfs:member <urn:A> , <urn:C> .\n"
+        )
+        assert evaluate_turtle_conditions(turtle)["intentHandlingState"] == "Fulfilled"
+
+    def test_elementOf_not_in_one_container_fail(self):
+        """A ∈ C1 but A ∉ C2 → Degraded."""
+        turtle = (
+            _SET_PFX
+            + "<urn:t:cond> a set:elementOf ;\n"
+            "    rdf:first <urn:A> ;\n"
+            "    rdf:rest  [ rdf:first <urn:t:c1> ; rdf:rest [ rdf:first <urn:t:c2> ; rdf:rest rdf:nil ] ] .\n"
+            "<urn:t:c1> rdfs:member <urn:A> .\n"
+            "<urn:t:c2> rdfs:member <urn:B> .\n"
+        )
+        assert evaluate_turtle_conditions(turtle)["intentHandlingState"] == "Degraded"
+
+    def test_elementOf_missing_args_fail(self):
+        """elementOf with only one arg → error → Degraded."""
+        turtle = (
+            _SET_PFX
+            + "<urn:t:cond> a set:elementOf ;\n"
+            "    rdf:first <urn:A> .\n"
+        )
+        assert evaluate_turtle_conditions(turtle)["intentHandlingState"] == "Degraded"
+
+    def test_empty_all_containers_empty_pass(self):
+        """C1 and C2 both have no members → Fulfilled."""
+        turtle = (
+            _SET_PFX
+            + "<urn:t:cond> a set:empty ;\n"
+            "    rdf:first <urn:t:c1> ; rdf:rest [ rdf:first <urn:t:c2> ; rdf:rest rdf:nil ] .\n"
+        )
+        assert evaluate_turtle_conditions(turtle)["intentHandlingState"] == "Fulfilled"
+
+    def test_empty_one_container_has_member_fail(self):
+        """C1 has a member → Degraded."""
+        turtle = (
+            _SET_PFX
+            + "<urn:t:cond> a set:empty ;\n"
+            "    rdf:first <urn:t:c1> .\n"
+            "<urn:t:c1> rdfs:member <urn:A> .\n"
+        )
+        assert evaluate_turtle_conditions(turtle)["intentHandlingState"] == "Degraded"
+
+    def test_empty_no_args_fail(self):
+        """set:empty with no container args → error → Degraded."""
+        turtle = _SET_PFX + "<urn:t:cond> a set:empty .\n"
+        assert evaluate_turtle_conditions(turtle)["intentHandlingState"] == "Degraded"
+
+
+class TestSetTemporalExtrema:
+    """set:newestMember and set:oldestMember."""
+
+    _PFX = (
+        _SET_PFX
+        + "@prefix ex: <urn:ex:> .\n"
+    )
+
+    def _make_turtle(self, fn_type: str, members: list[tuple[str, str]]) -> str:
+        """
+        fn_type: newestMember or oldestMember
+        members: [(uri, iso_timestamp), …]
+        Build fn with ts_prop=ex:ts, one container with all members.
+        Then wrap with setisMember to check which member was selected.
+        """
+        lines = self._PFX
+        lines += (
+            f"<urn:t:fn> a set:{fn_type} ;\n"
+            "    rdf:first ex:ts ;\n"
+            "    rdf:rest  [ rdf:first <urn:t:c> ; rdf:rest rdf:nil ] .\n"
+        )
+        for uri, ts in members:
+            lines += f"<urn:t:c> rdfs:member <{uri}> .\n"
+            lines += f"<{uri}> ex:ts \"{ts}\"^^xsd:dateTime .\n"
+        return lines
+
+    def test_newestMember_selected(self):
+        """newestMember picks the member with the most recent timestamp."""
+        turtle = self._make_turtle("newestMember", [
+            ("urn:m:old", "2026-01-01T00:00:00Z"),
+            ("urn:m:new", "2026-06-01T00:00:00Z"),
+        ])
+        # Wire: check that urn:m:new is in the result container
+        turtle += (
+            "<urn:t:check> a set:setisMember ;\n"
+            "    rdf:first <urn:m:new> ; rdf:rest <urn:t:rest> .\n"
+            "<urn:t:rest> rdfs:member <urn:t:fn> .\n"
+        )
+        assert evaluate_turtle_conditions(turtle)["intentHandlingState"] == "Fulfilled"
+
+    def test_oldestMember_selected(self):
+        """oldestMember picks the member with the earliest timestamp."""
+        turtle = self._make_turtle("oldestMember", [
+            ("urn:m:old", "2026-01-01T00:00:00Z"),
+            ("urn:m:new", "2026-06-01T00:00:00Z"),
+        ])
+        turtle += (
+            "<urn:t:check> a set:setisMember ;\n"
+            "    rdf:first <urn:m:old> ; rdf:rest <urn:t:rest> .\n"
+            "<urn:t:rest> rdfs:member <urn:t:fn> .\n"
+        )
+        assert evaluate_turtle_conditions(turtle)["intentHandlingState"] == "Fulfilled"
+
+    def test_newestMember_wrong_member_absent(self):
+        """newestMember result does not contain the older member."""
+        turtle = self._make_turtle("newestMember", [
+            ("urn:m:old", "2026-01-01T00:00:00Z"),
+            ("urn:m:new", "2026-06-01T00:00:00Z"),
+        ])
+        turtle += (
+            "<urn:t:check> a set:setisMember ;\n"
+            "    rdf:first <urn:m:old> ; rdf:rest <urn:t:rest> .\n"
+            "<urn:t:rest> rdfs:member <urn:t:fn> .\n"
+        )
+        assert evaluate_turtle_conditions(turtle)["intentHandlingState"] == "Degraded"
+
+    def test_temporal_extrema_no_timestamps_skips(self):
+        """Members with no timestamp property → no result → Degraded."""
+        turtle = (
+            _SET_PFX
+            + "<urn:t:fn> a set:newestMember ;\n"
+            "    rdf:first <urn:ex:ts> ;\n"
+            "    rdf:rest  [ rdf:first <urn:t:c> ; rdf:rest rdf:nil ] .\n"
+            "<urn:t:c> rdfs:member <urn:m:a> .\n"
+            "<urn:t:check> a set:setisMember ;\n"
+            "    rdf:first <urn:m:a> ; rdf:rest <urn:t:rest> .\n"
+            "<urn:t:rest> rdfs:member <urn:t:fn> .\n"
+        )
+        assert evaluate_turtle_conditions(turtle)["intentHandlingState"] == "Degraded"
+
+
+class TestSetTemporalFilters:
+    """set:membersAfter, membersBefore, membersSameTime, membersWhile."""
+
+    _PFX = _SET_PFX + "@prefix ex: <urn:ex:> .\n"
+
+    def _base_turtle(self, fn_type: str, ref_ts: str, members: list[tuple[str, str]]) -> str:
+        lines = self._PFX
+        lines += (
+            f"<urn:t:fn> a set:{fn_type} ;\n"
+            "    rdf:first ex:ts ;\n"
+            "    rdf:rest  [ rdf:first <urn:t:ref> ; rdf:rest [ rdf:first <urn:t:c> ; rdf:rest rdf:nil ] ] .\n"
+            f"<urn:t:ref> rdf:value \"{ref_ts}\"^^xsd:dateTime .\n"
+        )
+        for uri, ts in members:
+            lines += f"<urn:t:c> rdfs:member <{uri}> .\n"
+            lines += f"<{uri}> ex:ts \"{ts}\"^^xsd:dateTime .\n"
+        return lines
+
+    def test_membersAfter_pass(self):
+        """membersAfter ref=2026-03; m:new (2026-06) qualifies → setisMember → Fulfilled."""
+        turtle = self._base_turtle("membersAfter", "2026-03-01T00:00:00Z", [
+            ("urn:m:old", "2026-01-01T00:00:00Z"),
+            ("urn:m:new", "2026-06-01T00:00:00Z"),
+        ])
+        turtle += (
+            "<urn:t:check> a set:setisMember ;\n"
+            "    rdf:first <urn:m:new> ; rdf:rest <urn:t:rest> .\n"
+            "<urn:t:rest> rdfs:member <urn:t:fn> .\n"
+        )
+        assert evaluate_turtle_conditions(turtle)["intentHandlingState"] == "Fulfilled"
+
+    def test_membersAfter_old_member_excluded(self):
+        """The old member is before the ref and must not appear in result."""
+        turtle = self._base_turtle("membersAfter", "2026-03-01T00:00:00Z", [
+            ("urn:m:old", "2026-01-01T00:00:00Z"),
+            ("urn:m:new", "2026-06-01T00:00:00Z"),
+        ])
+        turtle += (
+            "<urn:t:check> a set:setisMember ;\n"
+            "    rdf:first <urn:m:old> ; rdf:rest <urn:t:rest> .\n"
+            "<urn:t:rest> rdfs:member <urn:t:fn> .\n"
+        )
+        assert evaluate_turtle_conditions(turtle)["intentHandlingState"] == "Degraded"
+
+    def test_membersBefore_pass(self):
+        """membersBefore ref=2026-03; m:old (2026-01) qualifies → Fulfilled."""
+        turtle = self._base_tuple = self._base_turtle("membersBefore", "2026-03-01T00:00:00Z", [
+            ("urn:m:old", "2026-01-01T00:00:00Z"),
+            ("urn:m:new", "2026-06-01T00:00:00Z"),
+        ])
+        turtle += (
+            "<urn:t:check> a set:setisMember ;\n"
+            "    rdf:first <urn:m:old> ; rdf:rest <urn:t:rest> .\n"
+            "<urn:t:rest> rdfs:member <urn:t:fn> .\n"
+        )
+        assert evaluate_turtle_conditions(turtle)["intentHandlingState"] == "Fulfilled"
+
+    def test_membersSameTime_pass(self):
+        """membersSameTime ref=2026-06-01; exact match → Fulfilled."""
+        turtle = self._base_turtle("membersSameTime", "2026-06-01T00:00:00+00:00", [
+            ("urn:m:match", "2026-06-01T00:00:00Z"),
+            ("urn:m:other", "2026-01-01T00:00:00Z"),
+        ])
+        turtle += (
+            "<urn:t:check> a set:setisMember ;\n"
+            "    rdf:first <urn:m:match> ; rdf:rest <urn:t:rest> .\n"
+            "<urn:t:rest> rdfs:member <urn:t:fn> .\n"
+        )
+        assert evaluate_turtle_conditions(turtle)["intentHandlingState"] == "Fulfilled"
+
+    def test_membersWhile_pass(self):
+        """membersWhile interval [2026-02, 2026-07]; m:mid (2026-04) qualifies."""
+        turtle = (
+            _SET_PFX
+            + "@prefix ex:   <urn:ex:> .\n"
+            "@prefix time: <http://www.w3.org/2006/time#> .\n"
+            "<urn:t:fn> a set:membersWhile ;\n"
+            "    rdf:first ex:ts ;\n"
+            "    rdf:rest  [ rdf:first <urn:t:interval> ; rdf:rest [ rdf:first <urn:t:c> ; rdf:rest rdf:nil ] ] .\n"
+            "<urn:t:interval> time:hasBeginning <urn:t:begin> ; time:hasEnd <urn:t:end> .\n"
+            "<urn:t:begin> time:inXSDDateTimeStamp \"2026-02-01T00:00:00+00:00\"^^xsd:dateTime .\n"
+            "<urn:t:end>   time:inXSDDateTimeStamp \"2026-07-01T00:00:00+00:00\"^^xsd:dateTime .\n"
+            "<urn:t:c> rdfs:member <urn:m:mid> , <urn:m:early> .\n"
+            "<urn:m:mid>   ex:ts \"2026-04-01T00:00:00Z\"^^xsd:dateTime .\n"
+            "<urn:m:early> ex:ts \"2026-01-01T00:00:00Z\"^^xsd:dateTime .\n"
+            "<urn:t:check> a set:setisMember ;\n"
+            "    rdf:first <urn:m:mid> ; rdf:rest <urn:t:rest> .\n"
+            "<urn:t:rest> rdfs:member <urn:t:fn> .\n"
+        )
+        assert evaluate_turtle_conditions(turtle)["intentHandlingState"] == "Fulfilled"
+
+    def test_membersWhile_out_of_range_excluded(self):
+        """m:early (2026-01) is before the interval start → not in result."""
+        turtle = (
+            _SET_PFX
+            + "@prefix ex:   <urn:ex:> .\n"
+            "@prefix time: <http://www.w3.org/2006/time#> .\n"
+            "<urn:t:fn> a set:membersWhile ;\n"
+            "    rdf:first ex:ts ;\n"
+            "    rdf:rest  [ rdf:first <urn:t:interval> ; rdf:rest [ rdf:first <urn:t:c> ; rdf:rest rdf:nil ] ] .\n"
+            "<urn:t:interval> time:hasBeginning <urn:t:begin> ; time:hasEnd <urn:t:end> .\n"
+            "<urn:t:begin> time:inXSDDateTimeStamp \"2026-02-01T00:00:00+00:00\"^^xsd:dateTime .\n"
+            "<urn:t:end>   time:inXSDDateTimeStamp \"2026-07-01T00:00:00+00:00\"^^xsd:dateTime .\n"
+            "<urn:t:c> rdfs:member <urn:m:early> .\n"
+            "<urn:m:early> ex:ts \"2026-01-01T00:00:00Z\"^^xsd:dateTime .\n"
+            "<urn:t:check> a set:setisMember ;\n"
+            "    rdf:first <urn:m:early> ; rdf:rest <urn:t:rest> .\n"
+            "<urn:t:rest> rdfs:member <urn:t:fn> .\n"
+        )
+        assert evaluate_turtle_conditions(turtle)["intentHandlingState"] == "Degraded"
+
+
+class TestSetGraphTraversal:
+    """set:resourcesOfType, resourcesWithProperty, resourcesWithPropertyObject,
+    typesOfMembers, valuesOfObjectProperty."""
+
+    _PFX = _SET_PFX + "@prefix ex: <urn:ex:> .\n"
+
+    def test_resourcesOfType_pass(self):
+        """resourcesOfType(ex:Widget): ex:w is typed ex:Widget → setisMember → Fulfilled."""
+        turtle = (
+            self._PFX
+            + "<urn:t:fn> a set:resourcesOfType ;\n"
+            "    rdf:first ex:Widget .\n"
+            "<urn:ex:w> a ex:Widget .\n"
+            "<urn:t:check> a set:setisMember ;\n"
+            "    rdf:first <urn:ex:w> ; rdf:rest <urn:t:rest> .\n"
+            "<urn:t:rest> rdfs:member <urn:t:fn> .\n"
+        )
+        assert evaluate_turtle_conditions(turtle)["intentHandlingState"] == "Fulfilled"
+
+    def test_resourcesOfType_absent_type_fail(self):
+        """resourcesOfType(ex:Gadget): no ex:Gadget in graph → ex:w not in result → Degraded."""
+        turtle = (
+            self._PFX
+            + "<urn:t:fn> a set:resourcesOfType ;\n"
+            "    rdf:first ex:Gadget .\n"
+            "<urn:ex:w> a ex:Widget .\n"
+            "<urn:t:check> a set:setisMember ;\n"
+            "    rdf:first <urn:ex:w> ; rdf:rest <urn:t:rest> .\n"
+            "<urn:t:rest> rdfs:member <urn:t:fn> .\n"
+        )
+        assert evaluate_turtle_conditions(turtle)["intentHandlingState"] == "Degraded"
+
+    def test_resourcesWithProperty_pass(self):
+        """resourcesWithProperty(ex:color): ex:w has ex:color → Fulfilled."""
+        turtle = (
+            self._PFX
+            + "<urn:t:fn> a set:resourcesWithProperty ;\n"
+            "    rdf:first ex:color .\n"
+            "<urn:ex:w> ex:color \"red\" .\n"
+            "<urn:t:check> a set:setisMember ;\n"
+            "    rdf:first <urn:ex:w> ; rdf:rest <urn:t:rest> .\n"
+            "<urn:t:rest> rdfs:member <urn:t:fn> .\n"
+        )
+        assert evaluate_turtle_conditions(turtle)["intentHandlingState"] == "Fulfilled"
+
+    def test_resourcesWithPropertyObject_pass(self):
+        """resourcesWithPropertyObject(ex:color, ex:red): ex:w has ex:color ex:red → Fulfilled."""
+        turtle = (
+            self._PFX
+            + "<urn:t:fn> a set:resourcesWithPropertyObject ;\n"
+            "    rdf:first ex:color ;\n"
+            "    rdf:rest  [ rdf:first ex:red ; rdf:rest rdf:nil ] .\n"
+            "<urn:ex:w> ex:color ex:red .\n"
+            "<urn:t:check> a set:setisMember ;\n"
+            "    rdf:first <urn:ex:w> ; rdf:rest <urn:t:rest> .\n"
+            "<urn:t:rest> rdfs:member <urn:t:fn> .\n"
+        )
+        assert evaluate_turtle_conditions(turtle)["intentHandlingState"] == "Fulfilled"
+
+    def test_resourcesWithPropertyObject_wrong_value_fail(self):
+        """ex:w has ex:color ex:blue, not ex:red → Degraded."""
+        turtle = (
+            self._PFX
+            + "<urn:t:fn> a set:resourcesWithPropertyObject ;\n"
+            "    rdf:first ex:color ;\n"
+            "    rdf:rest  [ rdf:first ex:red ; rdf:rest rdf:nil ] .\n"
+            "<urn:ex:w> ex:color ex:blue .\n"
+            "<urn:t:check> a set:setisMember ;\n"
+            "    rdf:first <urn:ex:w> ; rdf:rest <urn:t:rest> .\n"
+            "<urn:t:rest> rdfs:member <urn:t:fn> .\n"
+        )
+        assert evaluate_turtle_conditions(turtle)["intentHandlingState"] == "Degraded"
+
+    def test_typesOfMembers_pass(self):
+        """typesOfMembers({ex:w}): ex:w a ex:Widget → ex:Widget in result → Fulfilled."""
+        turtle = (
+            self._PFX
+            + "<urn:t:fn> a set:typesOfMembers ;\n"
+            "    rdf:first <urn:t:c> .\n"
+            "<urn:t:c> rdfs:member <urn:ex:w> .\n"
+            "<urn:ex:w> a ex:Widget .\n"
+            "<urn:t:check> a set:setisMember ;\n"
+            "    rdf:first ex:Widget ; rdf:rest <urn:t:rest> .\n"
+            "<urn:t:rest> rdfs:member <urn:t:fn> .\n"
+        )
+        assert evaluate_turtle_conditions(turtle)["intentHandlingState"] == "Fulfilled"
+
+    def test_valuesOfObjectProperty_pass(self):
+        """valuesOfObjectProperty(ex:knows, ex:alice): ex:alice ex:knows ex:bob → ex:bob in result."""
+        turtle = (
+            self._PFX
+            + "<urn:t:fn> a set:valuesOfObjectProperty ;\n"
+            "    rdf:first ex:knows ;\n"
+            "    rdf:rest  [ rdf:first ex:alice ; rdf:rest rdf:nil ] .\n"
+            "<urn:ex:alice> ex:knows ex:bob .\n"
+            "<urn:t:check> a set:setisMember ;\n"
+            "    rdf:first ex:bob ; rdf:rest <urn:t:rest> .\n"
+            "<urn:t:rest> rdfs:member <urn:t:fn> .\n"
+        )
+        assert evaluate_turtle_conditions(turtle)["intentHandlingState"] == "Fulfilled"
+
+
+class TestObservationReportingExpectation:
+    """icm:ObservationReportingExpectation — passes when icm:result true is asserted."""
+
+    _PFX = (
+        "@prefix icm: <http://tio.models.tmforum.org/tio/v3.6.0/IntentCommonModel/> .\n"
+        "@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .\n"
+        "@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .\n"
+    )
+
+    def test_result_true_passes(self):
+        """icm:result true → Fulfilled."""
+        turtle = (
+            self._PFX
+            + "<urn:t:exp> a icm:ObservationReportingExpectation ;\n"
+            "    icm:result true .\n"
+        )
+        assert evaluate_turtle_conditions(turtle)["intentHandlingState"] == "Fulfilled"
+
+    def test_result_absent_degrades(self):
+        """No icm:result → Degraded."""
+        turtle = (
+            self._PFX
+            + "<urn:t:exp> a icm:ObservationReportingExpectation .\n"
+        )
+        assert evaluate_turtle_conditions(turtle)["intentHandlingState"] == "Degraded"
+
+    def test_result_false_degrades(self):
+        """icm:result false → Degraded."""
+        turtle = (
+            self._PFX
+            + "<urn:t:exp> a icm:ObservationReportingExpectation ;\n"
+            "    icm:result false .\n"
+        )
+        assert evaluate_turtle_conditions(turtle)["intentHandlingState"] == "Degraded"
 
 
 # ── Extension type-propagation (tmf_ext_eval.rules Python port) ──────────────

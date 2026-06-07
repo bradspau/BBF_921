@@ -91,11 +91,22 @@ IntentSpecification evaluation (tmf_insp_eval rules Python port):
 
 Math function pre-processing (tmf_mathfn_eval.rules Python port):
   _compute_math_functions runs after metric resolution; it finds mf:mflogistic,
-  mf:mfpoly, and mf:mfmapping nodes and materialises their output as rdf:value
-  so downstream quantity evaluators can use the computed result as an operand.
-  mf:mflogistic  — L / (1 + exp(-k*(x-x0))) + c
-  mf:mfpoly      — l * sum(coeff_i * x^i) + c
-  mf:mfmapping   — piecewise lookup: returns result whose source list contains x
+  mf:mfpoly, mf:mfmapping, and quan: arithmetic nodes and materialises their
+  output as rdf:value so downstream quantity evaluators can use the computed
+  result as an operand.
+  mf:mflogistic      — L / (1 + exp(-k*(x-x0))) + c
+  mf:mfpoly          — l * sum(coeff_i * x^i) + c
+  mf:mfmapping       — piecewise lookup: returns result whose source list contains x
+  quan:sum           — arg1 + arg2  (rdf:first / rdf:rest chain)
+  quan:difference    — arg1 - arg2
+  quan:division      — arg1 / arg2
+  quan:multiplication — arg1 * arg2
+  quan:mean          — arithmetic mean of n args (rdf:list)
+  quan:median        — median of n args
+  quan:greatest      — max of n args
+  quan:smallest      — min of n args
+  quan:sumOfSet / multiplicationOfSet / meanOfSet / medianOfSet /
+  quan:greatestInSet / smallestInSet — same aggregations over rdfs:Container members
 
 Metric resolution patterns (replaces Jena tmf_metrics_eval.rules):
   A) rdf:first → <metric URI>       — direct ref; resolved via met:Observation
@@ -136,12 +147,19 @@ _PRE  = rdflib.Namespace("http://tio.models.tmforum.org/tio/v3.6.0/PreferenceOfH
 _PBI  = rdflib.Namespace("http://tio.models.tmforum.org/tio/v3.6.0/ProposalBestIntent/")
 
 # (rdf_type, comparator, display_symbol) — two-argument quantity pattern
+# Each operator appears twice: once under the quan:quanat* URI (legacy) and once
+# under the short-name URI defined in QuantityOntology.ttl (quan:atLeast, etc.).
 _TWO_ARG_OPS: list[tuple[rdflib.URIRef, object, str]] = [
     (_QUAN.quanatLeast, ge, ">="),
+    (_QUAN.atLeast,     ge, ">="),
     (_QUAN.quanatMost,  le, "<="),
+    (_QUAN.atMost,      le, "<="),
     (_QUAN.quangreater, gt, ">"),
+    (_QUAN.greater,     gt, ">"),
     (_QUAN.quansmaller, lt, "<"),
+    (_QUAN.smaller,     lt, "<"),
     (_QUAN.quanexactly, eq, "=="),
+    (_QUAN.exactly,     eq, "=="),
 ]
 
 # (log property, Python combinator over list[bool])
@@ -202,9 +220,10 @@ def _mf_param(
 
 def _compute_math_functions(g: rdflib.Graph) -> None:
     """
-    Compute mf:mflogistic, mf:mfpoly, and mf:mfmapping function nodes and
-    materialise their output as rdf:value so that downstream quantity evaluators
-    (which read rdf:value from rdf:first operand nodes) can compare the result.
+    Compute mf:mflogistic, mf:mfpoly, mf:mfmapping, and quan: arithmetic nodes
+    and materialise their output as rdf:value so that downstream quantity
+    evaluators (which read rdf:value from rdf:first operand nodes) can compare
+    the result.
 
     Must run after _resolve_metric_refs so that metric-sourced inputs are
     already resolved before the math is applied.
@@ -284,6 +303,92 @@ def _compute_math_functions(g: rdflib.Graph) -> None:
                     g.set((fn, RDF.value, rdflib.Literal(result_val, datatype=XSD.decimal)))
                 break
 
+    # ── quan: binary arithmetic (sum, difference, division, multiplication) ───
+    # Arguments are in an rdf:first / rdf:rest chain identical to comparators.
+    _ARITH_OPS: list[tuple[rdflib.URIRef, object]] = [
+        (_QUAN.sum,            lambda a, b: a + b),
+        (_QUAN.difference,     lambda a, b: a - b),
+        (_QUAN.division,       lambda a, b: a / b),
+        (_QUAN.multiplication, lambda a, b: a * b),
+    ]
+    for rdf_type, op in _ARITH_OPS:
+        for fn in list(g.subjects(RDF.type, rdf_type)):
+            if g.value(fn, RDF.value) is not None:
+                continue
+            arg1_node = g.value(fn, RDF.first)
+            rest_node = g.value(fn, RDF.rest)
+            arg2_node = g.value(rest_node, RDF.first) if rest_node is not None else None
+            a = _rdf_decimal(g, arg1_node)
+            b = _rdf_decimal(g, arg2_node)
+            if a is None or b is None:
+                continue
+            try:
+                result = op(a, b)
+            except (ZeroDivisionError, InvalidOperation, OverflowError):
+                continue
+            g.set((fn, RDF.value, rdflib.Literal(result, datatype=XSD.decimal)))
+
+    # ── quan: n-ary aggregation (mean, median, greatest, smallest) ────────────
+    # Arguments form the rdf:list headed at the function node itself.
+    for rdf_type, agg_fn in (
+        (_QUAN.mean,     lambda vs: sum(vs) / len(vs)),
+        (_QUAN.median,   lambda vs: sorted(vs)[len(vs) // 2] if len(vs) % 2
+                         else (sorted(vs)[len(vs) // 2 - 1] + sorted(vs)[len(vs) // 2]) / 2),
+        (_QUAN.greatest, max),
+        (_QUAN.smallest, min),
+    ):
+        for fn in list(g.subjects(RDF.type, rdf_type)):
+            if g.value(fn, RDF.value) is not None:
+                continue
+            vals: list[Decimal] = []
+            for item in _iter_rdf_list(g, fn):
+                v = _rdf_decimal(g, item)
+                if v is not None:
+                    vals.append(v)
+            if not vals:
+                continue
+            try:
+                result = agg_fn(vals)
+            except (ZeroDivisionError, InvalidOperation, OverflowError):
+                continue
+            g.set((fn, RDF.value, rdflib.Literal(Decimal(str(result)), datatype=XSD.decimal)))
+
+    # ── quan: set-aggregation (sumOfSet, multiplicationOfSet, meanOfSet, etc.) ─
+    # Each function takes one or more rdfs:Container args (an rdf:list off the fn
+    # node). Members of all containers are unioned; rdf:value is read from each.
+    def _prod(vs: list[Decimal]) -> Decimal:
+        r = Decimal("1")
+        for v in vs:
+            r *= v
+        return r
+
+    _SET_AGG_OPS: list[tuple[rdflib.URIRef, object]] = [
+        (_QUAN.sumOfSet,            lambda vs: sum(vs)),
+        (_QUAN.multiplicationOfSet, _prod),
+        (_QUAN.meanOfSet,           lambda vs: sum(vs) / len(vs)),
+        (_QUAN.medianOfSet,         lambda vs: sorted(vs)[len(vs) // 2] if len(vs) % 2
+                                    else (sorted(vs)[len(vs) // 2 - 1] + sorted(vs)[len(vs) // 2]) / 2),
+        (_QUAN.greatestInSet,       max),
+        (_QUAN.smallestInSet,       min),
+    ]
+    for rdf_type, agg_fn in _SET_AGG_OPS:
+        for fn in list(g.subjects(RDF.type, rdf_type)):
+            if g.value(fn, RDF.value) is not None:
+                continue
+            vals: list[Decimal] = []
+            for container in _iter_rdf_list(g, fn):
+                for member in g.objects(container, RDFS.member):
+                    v = _rdf_decimal(g, member)
+                    if v is not None:
+                        vals.append(v)
+            if not vals:
+                continue
+            try:
+                result = agg_fn(vals)
+            except (ZeroDivisionError, InvalidOperation, OverflowError):
+                continue
+            g.set((fn, RDF.value, rdflib.Literal(Decimal(str(result)), datatype=XSD.decimal)))
+
 
 # ── Metric resolution ─────────────────────────────────────────────────────────
 
@@ -352,7 +457,7 @@ def _resolve_metric_refs(g: rdflib.Graph) -> None:
         if val is not None:
             g.set((fn, RDF.value, val))
 
-    all_qty_types = [rdf_type for rdf_type, _, _ in _TWO_ARG_OPS] + [_QUAN.quaninRange]
+    all_qty_types = [rdf_type for rdf_type, _, _ in _TWO_ARG_OPS] + [_QUAN.quaninRange, _QUAN.inRange]
     seen: set = set()
     for rdf_type in all_qty_types:
         for cond in g.subjects(RDF.type, rdf_type):
@@ -613,6 +718,187 @@ def _eval_match_statement(g: rdflib.Graph, list_node: rdflib.term.Node) -> tuple
 def _container_members(g: rdflib.Graph, container: rdflib.term.Node) -> frozenset:
     """All rdfs:member items of a container node."""
     return frozenset(g.objects(container, RDFS.member))
+
+
+def _materialise_members(g: rdflib.Graph, node: rdflib.term.Node, members) -> None:
+    """Attach computed members to node as rdfs:member triples."""
+    for m in members:
+        g.add((node, RDFS.member, m))
+
+
+def _compute_set_constructors(g: rdflib.Graph) -> None:
+    """
+    Pre-processing pass: materialise derived containers for set constructor
+    functions so that downstream set operators (setisMember, setforAll, …)
+    see them as plain rdfs:Container nodes.
+
+    Runs after _compute_math_functions in the evaluation pipeline.
+
+    Constructors handled:
+      set:union                   — union of all container args
+      set:intersection            — intersection of all container args
+      set:difference              — first container minus remaining containers
+      set:newestMember            — single-member container: member with most recent timestamp
+      set:oldestMember            — single-member container: member with oldest timestamp
+      set:membersAfter            — members whose timestamp > time_ref
+      set:membersBefore           — members whose timestamp < time_ref
+      set:membersSameTime         — members whose timestamp == time_ref
+      set:membersWhile            — members whose timestamp is within interval
+      set:resourcesOfType         — subjects typed with any given class
+      set:resourcesWithProperty   — subjects that have any given property
+      set:resourcesWithPropertyObject — subjects where property = given object
+      set:typesOfMembers          — rdf:types of all container members
+      set:valuesOfObjectProperty  — values of a property on given resources
+    """
+    # ── Basic algebra ─────────────────────────────────────────────────────────
+    for fn in list(g.subjects(RDF.type, _SET.union)):
+        if list(g.objects(fn, RDFS.member)):
+            continue
+        items = list(_iter_rdf_list(g, fn))
+        members: set = set()
+        for c in items:
+            members |= set(g.objects(c, RDFS.member))
+        _materialise_members(g, fn, members)
+
+    for fn in list(g.subjects(RDF.type, _SET.intersection)):
+        if list(g.objects(fn, RDFS.member)):
+            continue
+        items = list(_iter_rdf_list(g, fn))
+        if not items:
+            continue
+        members = set(g.objects(items[0], RDFS.member))
+        for c in items[1:]:
+            members &= set(g.objects(c, RDFS.member))
+        _materialise_members(g, fn, members)
+
+    for fn in list(g.subjects(RDF.type, _SET.difference)):
+        if list(g.objects(fn, RDFS.member)):
+            continue
+        items = list(_iter_rdf_list(g, fn))
+        if not items:
+            continue
+        members = set(g.objects(items[0], RDFS.member))
+        for c in items[1:]:
+            members -= set(g.objects(c, RDFS.member))
+        _materialise_members(g, fn, members)
+
+    # ── Temporal extrema ──────────────────────────────────────────────────────
+    for rdf_type, reverse in ((_SET.newestMember, True), (_SET.oldestMember, False)):
+        for fn in list(g.subjects(RDF.type, rdf_type)):
+            if list(g.objects(fn, RDFS.member)):
+                continue
+            args = list(_iter_rdf_list(g, fn))
+            if len(args) < 2:
+                continue
+            ts_prop = args[0]
+            all_members: list = []
+            for c in args[1:]:
+                all_members.extend(g.objects(c, RDFS.member))
+            best = None
+            best_dt = None
+            for m in all_members:
+                raw = g.value(m, ts_prop)
+                if raw is None:
+                    continue
+                dt = _parse_timestamp(str(raw))
+                if best_dt is None or (reverse and dt > best_dt) or (not reverse and dt < best_dt):
+                    best_dt = dt
+                    best = m
+            if best is not None:
+                g.add((fn, RDFS.member, best))
+
+    # ── Temporal filters ──────────────────────────────────────────────────────
+    _TIME = rdflib.Namespace("http://www.w3.org/2006/time#")
+
+    for rdf_type, cmp_fn in (
+        (_SET.membersAfter,    lambda dt, ref, _begin, _end: dt > ref),
+        (_SET.membersBefore,   lambda dt, ref, _begin, _end: dt < ref),
+        (_SET.membersSameTime, lambda dt, ref, _begin, _end: dt == ref),
+        (_SET.membersWhile,    lambda dt, _ref, begin, end:
+                               (begin is None or dt >= begin) and (end is None or dt <= end)),
+    ):
+        for fn in list(g.subjects(RDF.type, rdf_type)):
+            if list(g.objects(fn, RDFS.member)):
+                continue
+            args = list(_iter_rdf_list(g, fn))
+            if len(args) < 3:
+                continue
+            ts_prop = args[0]
+            time_arg = args[1]
+            containers = args[2:]
+
+            # Resolve reference time — literal or resource with rdf:value/time:inXSDDateTimeStamp
+            ref_raw = g.value(time_arg, RDF.value) or g.value(time_arg, _TIME.inXSDDateTimeStamp) or time_arg
+            ref_dt = _parse_timestamp(str(ref_raw)) if ref_raw is not None else None
+
+            # For membersWhile: resolve interval begin/end
+            begin_node = g.value(time_arg, _TIME.hasBeginning)
+            end_node = g.value(time_arg, _TIME.hasEnd)
+            begin_raw = g.value(begin_node, _TIME.inXSDDateTimeStamp) if begin_node else None
+            end_raw = g.value(end_node, _TIME.inXSDDateTimeStamp) if end_node else None
+            begin_dt = _parse_timestamp(str(begin_raw)) if begin_raw else None
+            end_dt = _parse_timestamp(str(end_raw)) if end_raw else None
+
+            members = []
+            for c in containers:
+                for m in g.objects(c, RDFS.member):
+                    raw = g.value(m, ts_prop)
+                    if raw is None:
+                        continue
+                    dt = _parse_timestamp(str(raw))
+                    if cmp_fn(dt, ref_dt, begin_dt, end_dt):
+                        members.append(m)
+            _materialise_members(g, fn, members)
+
+    # ── Graph-traversal builders ──────────────────────────────────────────────
+    for fn in list(g.subjects(RDF.type, _SET.resourcesOfType)):
+        if list(g.objects(fn, RDFS.member)):
+            continue
+        members = set()
+        for cls in _iter_rdf_list(g, fn):
+            members |= set(g.subjects(RDF.type, cls))
+        _materialise_members(g, fn, members)
+
+    for fn in list(g.subjects(RDF.type, _SET.resourcesWithProperty)):
+        if list(g.objects(fn, RDFS.member)):
+            continue
+        members = set()
+        for prop in _iter_rdf_list(g, fn):
+            members |= set(g.subjects(prop, None))
+        _materialise_members(g, fn, members)
+
+    for fn in list(g.subjects(RDF.type, _SET.resourcesWithPropertyObject)):
+        if list(g.objects(fn, RDFS.member)):
+            continue
+        args = list(_iter_rdf_list(g, fn))
+        if not args:
+            continue
+        prop = args[0]
+        members = set()
+        for obj in args[1:]:
+            members |= set(g.subjects(prop, obj))
+        _materialise_members(g, fn, members)
+
+    for fn in list(g.subjects(RDF.type, _SET.typesOfMembers)):
+        if list(g.objects(fn, RDFS.member)):
+            continue
+        types: set = set()
+        for c in _iter_rdf_list(g, fn):
+            for m in g.objects(c, RDFS.member):
+                types |= set(g.objects(m, RDF.type))
+        _materialise_members(g, fn, types)
+
+    for fn in list(g.subjects(RDF.type, _SET.valuesOfObjectProperty)):
+        if list(g.objects(fn, RDFS.member)):
+            continue
+        args = list(_iter_rdf_list(g, fn))
+        if not args:
+            continue
+        prop = args[0]
+        values: set = set()
+        for res in args[1:]:
+            values |= set(g.objects(res, prop))
+        _materialise_members(g, fn, values)
 
 
 def _eval_is_member(g: rdflib.Graph, node: rdflib.term.Node) -> tuple[bool, list[dict]]:
@@ -889,6 +1175,47 @@ def _eval_used_vocabulary_for(g: rdflib.Graph, node: rdflib.term.Node) -> tuple[
     return passed, [{"type": "usedVocabularyFor", "passed": passed}]
 
 
+def _eval_element_of(g: rdflib.Graph, node: rdflib.term.Node) -> tuple[bool, list[dict]]:
+    """
+    set:elementOf — true if rdf:first resource is an rdfs:member of ALL
+    remaining container args (rdf:rest list).
+    """
+    args = list(_iter_rdf_list(g, node))
+    if len(args) < 2:
+        return False, [{"type": "elementOf", "error": f"expected ≥2 args, got {len(args)}", "passed": False}]
+    resource = args[0]
+    containers = args[1:]
+    passed = all(resource in g.objects(c, RDFS.member) for c in containers)
+    return passed, [{"type": "elementOf", "resource": str(resource),
+                     "container_count": len(containers), "passed": passed}]
+
+
+def _eval_empty_set(g: rdflib.Graph, node: rdflib.term.Node) -> tuple[bool, list[dict]]:
+    """
+    set:empty — true if every container arg has zero rdfs:members.
+    """
+    containers = list(_iter_rdf_list(g, node))
+    if not containers:
+        return False, [{"type": "empty", "error": "no container args", "passed": False}]
+    passed = all(not list(g.objects(c, RDFS.member)) for c in containers)
+    return passed, [{"type": "empty", "container_count": len(containers), "passed": passed}]
+
+
+def _eval_observation_reporting_expectation(
+    g: rdflib.Graph, node: rdflib.term.Node
+) -> tuple[bool, list[dict]]:
+    """
+    icm:ObservationReportingExpectation — passes if icm:result "true"^^xsd:boolean
+    has been asserted on the node (set by the dispatcher when a matching
+    observation report is generated).  Absent result → Degraded.
+    """
+    result = g.value(node, _ICM.result)
+    passed = result == rdflib.Literal(True)
+    return passed, [{"type": "ObservationReportingExpectation",
+                     "result": str(result) if result is not None else None,
+                     "passed": passed}]
+
+
 # ── Recursive tree evaluator ──────────────────────────────────────────────────
 
 def _eval_node(g: rdflib.Graph, node: rdflib.term.Node) -> tuple[bool, list[dict]]:
@@ -963,7 +1290,7 @@ def _eval_node(g: rdflib.Graph, node: rdflib.term.Node) -> tuple[bool, list[dict
             cond = _eval_two_arg(g, node, rdf_type, cmp_op, sym)
             return cond["passed"], [cond]
 
-    if (node, RDF.type, _QUAN.quaninRange) in g:
+    if (node, RDF.type, _QUAN.quaninRange) in g or (node, RDF.type, _QUAN.inRange) in g:
         cond = _eval_range(g, node)
         return cond["passed"], [cond]
 
@@ -976,12 +1303,18 @@ def _eval_node(g: rdflib.Graph, node: rdflib.term.Node) -> tuple[bool, list[dict
         return _eval_included_in(g, node)
     if (node, RDF.type, _SET.setforAll) in g:
         return _eval_for_all(g, node)
+    if (node, RDF.type, _SET.elementOf) in g:
+        return _eval_element_of(g, node)
+    if (node, RDF.type, _SET.empty) in g:
+        return _eval_empty_set(g, node)
 
     # ── ICM expectation types ────────────────────────────────────────────────
     if (node, RDF.type, _ICM.DeliveryExpectation) in g:
         return _eval_delivery_expectation(g, node)
     if (node, RDF.type, _ICM.PropertyExpectation) in g:
         return _eval_property_expectation(g, node)
+    if (node, RDF.type, _ICM.ObservationReportingExpectation) in g:
+        return _eval_observation_reporting_expectation(g, node)
 
     # ── Validity function ─────────────────────────────────────────────────────
     if (node, RDF.type, _IV.ivvalidityOf) in g:
@@ -1068,9 +1401,10 @@ def _flat_scan(g: rdflib.Graph) -> list[dict]:
 
     for rdf_type in (
         *(rt for rt, _, _ in _TWO_ARG_OPS),
-        _QUAN.quaninRange,
+        _QUAN.quaninRange, _QUAN.inRange,
         _SET.setisMember, _SET.setintersectsWith, _SET.setincludedIn, _SET.setforAll,
-        _ICM.DeliveryExpectation, _ICM.PropertyExpectation,
+        _SET.elementOf, _SET.empty,
+        _ICM.DeliveryExpectation, _ICM.PropertyExpectation, _ICM.ObservationReportingExpectation,
         _IV.ivvalidityOf,
         _IG.igGuaranteeReport,
         _INSP.inspvalueSelected, _INSP.inspchosenAny, _INSP.inspusedVocabularyFor,
@@ -1089,7 +1423,8 @@ def _flat_scan(g: rdflib.Graph) -> list[dict]:
 
 _SIMPLE_FAIL_TYPES = frozenset([
     "setIsMember", "setIntersectsWith", "setIncludedIn", "setForAll",
-    "DeliveryExpectation", "PropertyExpectation",
+    "elementOf", "empty",
+    "DeliveryExpectation", "PropertyExpectation", "ObservationReportingExpectation",
     "validityOf", "validityGate",
     "GuaranteeReport",
     "valueSelected", "chosenAny", "usedVocabularyFor",
@@ -1139,6 +1474,7 @@ def evaluate_turtle_conditions(turtle_str: str) -> dict:
 
     _resolve_metric_refs(g)
     _compute_math_functions(g)
+    _compute_set_constructors(g)
     _resolve_validity_chains(g)
     _derive_guarantee_states(g)
     _derive_ext_types(g)
