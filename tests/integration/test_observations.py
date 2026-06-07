@@ -20,19 +20,27 @@ INTENT_ID = "aaaaaaaa-1111-2222-3333-bbbbbbbbbbbb"
 METRIC_URI = "http://broadband-forum.org/Intent#DownstreamBandwidthMetric"
 OBS_URL = f"{BASE}/intent/{INTENT_ID}/observation"
 
+_NO_OBS = {"results": {"bindings": []}}
+
+
+def _mock_observation_write() -> None:
+    """Mock the GSP POST and the pruning SPARQL SELECT (no old observations)."""
+    respx.post(f"{FUSEKI}/{DATASET}/data").mock(return_value=httpx.Response(200))
+    respx.post(f"{FUSEKI}/{DATASET}/sparql").mock(
+        return_value=httpx.Response(200, json=_NO_OBS)
+    )
+
 
 class TestObservationEndpoint:
     @respx.mock
     def test_post_observation_returns_201(self, tc):
-        respx.post(f"{FUSEKI}/{DATASET}/data").mock(return_value=httpx.Response(200))
-
+        _mock_observation_write()
         resp = tc.post(OBS_URL, json={"metricUri": METRIC_URI, "value": 95.5})
         assert resp.status_code == 201
 
     @respx.mock
     def test_response_contains_expected_fields(self, tc):
-        respx.post(f"{FUSEKI}/{DATASET}/data").mock(return_value=httpx.Response(200))
-
+        _mock_observation_write()
         resp = tc.post(OBS_URL, json={"metricUri": METRIC_URI, "value": 95.5})
         body = resp.json()
         assert body["metricUri"] == METRIC_URI
@@ -42,8 +50,7 @@ class TestObservationEndpoint:
 
     @respx.mock
     def test_post_observation_with_obtained_at(self, tc):
-        respx.post(f"{FUSEKI}/{DATASET}/data").mock(return_value=httpx.Response(200))
-
+        _mock_observation_write()
         resp = tc.post(OBS_URL, json={
             "metricUri": METRIC_URI,
             "value": 95.5,
@@ -68,8 +75,7 @@ class TestObservationEndpoint:
 
     @respx.mock
     def test_schedule_evaluation_called_after_write(self, tc):
-        respx.post(f"{FUSEKI}/{DATASET}/data").mock(return_value=httpx.Response(200))
-
+        _mock_observation_write()
         with patch("src.api.routers.observation.schedule_evaluation") as mock_sched:
             mock_sched.return_value = None
             tc.post(OBS_URL, json={"metricUri": METRIC_URI, "value": 95.5})
@@ -80,8 +86,7 @@ class TestObservationEndpoint:
     @respx.mock
     def test_observation_id_is_uuid(self, tc):
         import re
-        respx.post(f"{FUSEKI}/{DATASET}/data").mock(return_value=httpx.Response(200))
-
+        _mock_observation_write()
         resp = tc.post(OBS_URL, json={"metricUri": METRIC_URI, "value": 95.5})
         obs_id = resp.json()["observationId"]
         assert re.match(

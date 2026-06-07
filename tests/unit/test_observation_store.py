@@ -59,10 +59,14 @@ class TestBuildObservationTurtle:
         assert "100.0" in t
 
 
+_NO_OBS_BINDINGS = {"results": {"bindings": []}}
+
+
 class TestWriteObservation:
     @respx.mock
     async def test_posts_to_observations_graph(self):
         route = respx.post(f"{FUSEKI}/{DATASET}/data").mock(return_value=httpx.Response(200))
+        respx.post(f"{FUSEKI}/{DATASET}/sparql").mock(return_value=httpx.Response(200, json=_NO_OBS_BINDINGS))
         async with FusekiClient(FUSEKI, DATASET) as client:
             obs_id = await write_observation(INTENT_ID, METRIC_URI, 95.5, client)
         assert route.called
@@ -72,6 +76,7 @@ class TestWriteObservation:
     @respx.mock
     async def test_returns_uuid(self):
         respx.post(f"{FUSEKI}/{DATASET}/data").mock(return_value=httpx.Response(200))
+        respx.post(f"{FUSEKI}/{DATASET}/sparql").mock(return_value=httpx.Response(200, json=_NO_OBS_BINDINGS))
         async with FusekiClient(FUSEKI, DATASET) as client:
             obs_id = await write_observation(INTENT_ID, METRIC_URI, 95.5, client)
         assert _UUID_RE.match(obs_id)
@@ -79,6 +84,7 @@ class TestWriteObservation:
     @respx.mock
     async def test_custom_obtained_at_used(self):
         route = respx.post(f"{FUSEKI}/{DATASET}/data").mock(return_value=httpx.Response(200))
+        respx.post(f"{FUSEKI}/{DATASET}/sparql").mock(return_value=httpx.Response(200, json=_NO_OBS_BINDINGS))
         async with FusekiClient(FUSEKI, DATASET) as client:
             await write_observation(INTENT_ID, METRIC_URI, 95.5, client, "2026-06-04T10:00:00Z")
         body = route.calls[0].request.content.decode()
@@ -87,10 +93,54 @@ class TestWriteObservation:
     @respx.mock
     async def test_value_in_request_body(self):
         route = respx.post(f"{FUSEKI}/{DATASET}/data").mock(return_value=httpx.Response(200))
+        respx.post(f"{FUSEKI}/{DATASET}/sparql").mock(return_value=httpx.Response(200, json=_NO_OBS_BINDINGS))
         async with FusekiClient(FUSEKI, DATASET) as client:
             await write_observation(INTENT_ID, METRIC_URI, 42.5, client)
         body = route.calls[0].request.content.decode()
         assert "42.5" in body
+
+    @respx.mock
+    async def test_prunes_old_observations_beyond_limit(self, monkeypatch):
+        """When >MAX_OBS_PER_METRIC observations exist, old ones are deleted."""
+        import src.handler.observation_store as obs_mod
+        monkeypatch.setattr(obs_mod, "_MAX_OBS_PER_METRIC", 2)
+
+        old_obs_uris = [
+            f"http://tmforum.org/api/v5/intents/{INTENT_ID}/observations/old-{i}"
+            for i in range(3)
+        ]
+        bindings = [
+            {"obs": {"type": "uri", "value": u}}
+            for u in old_obs_uris
+        ]
+        respx.post(f"{FUSEKI}/{DATASET}/data").mock(return_value=httpx.Response(200))
+        respx.post(f"{FUSEKI}/{DATASET}/sparql").mock(
+            return_value=httpx.Response(200, json={"results": {"bindings": bindings}})
+        )
+        update_route = respx.post(f"{FUSEKI}/{DATASET}/update").mock(return_value=httpx.Response(200))
+        async with FusekiClient(FUSEKI, DATASET) as client:
+            await write_observation(INTENT_ID, METRIC_URI, 99.0, client)
+
+        assert update_route.called
+        from urllib.parse import unquote_plus
+        body = unquote_plus(update_route.calls[0].request.content.decode())
+        assert old_obs_uris[2] in body
+
+    @respx.mock
+    async def test_no_delete_when_within_limit(self, monkeypatch):
+        """When observation count ≤ MAX_OBS_PER_METRIC, no SPARQL DELETE is sent."""
+        import src.handler.observation_store as obs_mod
+        monkeypatch.setattr(obs_mod, "_MAX_OBS_PER_METRIC", 10)
+
+        respx.post(f"{FUSEKI}/{DATASET}/data").mock(return_value=httpx.Response(200))
+        respx.post(f"{FUSEKI}/{DATASET}/sparql").mock(
+            return_value=httpx.Response(200, json=_NO_OBS_BINDINGS)
+        )
+        update_route = respx.post(f"{FUSEKI}/{DATASET}/update").mock(return_value=httpx.Response(200))
+        async with FusekiClient(FUSEKI, DATASET) as client:
+            await write_observation(INTENT_ID, METRIC_URI, 99.0, client)
+
+        assert not update_route.called
 
 
 class TestGetObservationsTurtle:

@@ -428,24 +428,34 @@ def _parse_timestamp(raw: str) -> datetime:
         return datetime.min.replace(tzinfo=timezone.utc)
 
 
-def _latest_observation_value(
-    g: rdflib.Graph, metric_uri: rdflib.term.Node
-) -> rdflib.term.Literal | None:
-    """Return the rdf:value of the most recent met:Observation for a metric."""
-    best_dt: datetime | None = None
-    best_val = None
+def _build_obs_index(
+    g: rdflib.Graph,
+) -> dict[rdflib.term.Node, rdflib.term.Literal]:
+    """
+    Build a metric_uri → latest_value index in one pass over met:Observation nodes.
+
+    Replaces the previous per-metric full-scan (_latest_observation_value) with an
+    O(observations) single pass, reducing _resolve_metric_refs from
+    O(conditions × observations) to O(observations + conditions).
+    """
+    best: dict[rdflib.term.Node, tuple[datetime, rdflib.term.Literal]] = {}
     for obs in g.subjects(RDF.type, _MET.Observation):
-        if (obs, _MET.observedMetric, metric_uri) not in g:
+        metric = g.value(obs, _MET.observedMetric)
+        if metric is None:
             continue
         val = g.value(obs, RDF.value)
         if val is None:
             continue
         obtained_at = g.value(obs, _MET.obtainedAt)
-        dt = _parse_timestamp(str(obtained_at)) if obtained_at is not None else datetime.min.replace(tzinfo=timezone.utc)
-        if best_dt is None or dt > best_dt:
-            best_dt = dt
-            best_val = val
-    return best_val
+        dt = (
+            _parse_timestamp(str(obtained_at))
+            if obtained_at is not None
+            else datetime.min.replace(tzinfo=timezone.utc)
+        )
+        existing = best.get(metric)
+        if existing is None or dt > existing[0]:
+            best[metric] = (dt, val)
+    return {m: v for m, (_, v) in best.items()}
 
 
 def _resolve_metric_refs(g: rdflib.Graph) -> None:
@@ -460,13 +470,15 @@ def _resolve_metric_refs(g: rdflib.Graph) -> None:
 
     Pattern A — direct metric URI used as rdf:first in a quantity condition.
     """
+    obs_index = _build_obs_index(g)
+
     for fn in g.subjects(RDF.type, _MET.metlastValue):
         if g.value(fn, RDF.value) is not None:
             continue
         metric = g.value(fn, RDFS.member)
         if metric is None:
             continue
-        val = _latest_observation_value(g, metric)
+        val = obs_index.get(metric)
         if val is not None:
             g.set((fn, RDF.value, val))
 
@@ -490,7 +502,7 @@ def _resolve_metric_refs(g: rdflib.Graph) -> None:
             seen.add(val_node)
             if g.value(val_node, RDF.value) is not None:
                 continue
-            val = _latest_observation_value(g, val_node)
+            val = obs_index.get(val_node)
             if val is not None:
                 g.set((val_node, RDF.value, val))
 
@@ -1370,6 +1382,53 @@ def _eval_validity_reporting_expectation(
                      "passed": passed}]
 
 
+# ── Type-dispatch table ───────────────────────────────────────────────────────
+# Pre-computed {rdf_type → handler(g, node) → (bool, list[dict])} used by
+# _eval_node to replace ~30 sequential membership tests with a single type
+# fetch + O(1) dict lookup.
+
+def _two_arg_handler(
+    rdf_type: rdflib.URIRef, cmp_op: Callable, sym: str
+) -> Callable:
+    def _h(g: rdflib.Graph, node: rdflib.term.Node) -> tuple[bool, list[dict]]:
+        cond = _eval_two_arg(g, node, rdf_type, cmp_op, sym)
+        return cond["passed"], [cond]
+    return _h
+
+
+def _range_handler(g: rdflib.Graph, node: rdflib.term.Node) -> tuple[bool, list[dict]]:
+    cond = _eval_range(g, node)
+    return cond["passed"], [cond]
+
+
+_TYPE_DISPATCH: dict[rdflib.URIRef, Callable] = {
+    **{rdf_type: _two_arg_handler(rdf_type, cmp_op, sym)
+       for rdf_type, cmp_op, sym in _TWO_ARG_OPS},
+    _QUAN.quaninRange:                          _range_handler,
+    _QUAN.inRange:                              _range_handler,
+    _SET.setisMember:                           _eval_is_member,
+    _SET.setintersectsWith:                     _eval_intersects_with,
+    _SET.setincludedIn:                         _eval_included_in,
+    _SET.setforAll:                             _eval_for_all,
+    _SET.elementOf:                             _eval_element_of,
+    _SET.empty:                                 _eval_empty_set,
+    _ICM.DeliveryExpectation:                   _eval_delivery_expectation,
+    _ICM.PropertyExpectation:                   _eval_property_expectation,
+    _ICM.ObservationReportingExpectation:       _eval_observation_reporting_expectation,
+    _IG.GuaranteeReportingExpectation:          _eval_guarantee_reporting_expectation,
+    _IV.ValidityReportingExpectation:           _eval_validity_reporting_expectation,
+    _IV.ivvalidityOf:                           _eval_validity_of,
+    _IG.igGuaranteeReport:                      _eval_guarantee_report,
+    _INSP.inspvalueSelected:                    _eval_value_selected,
+    _INSP.inspvalueSelectedFor:                 _eval_value_selected_for,
+    _INSP.inspchosenAny:                        _eval_chosen_any,
+    _INSP.inspchosenAll:                        _eval_chosen_all,
+    _INSP.inspchosenAllFor:                     _eval_chosen_all_for,
+    _INSP.inspchosenAnyFor:                     _eval_chosen_any_for,
+    _INSP.inspusedVocabularyFor:                _eval_used_vocabulary_for,
+}
+
+
 # ── Recursive tree evaluator ──────────────────────────────────────────────────
 
 def _eval_node(g: rdflib.Graph, node: rdflib.term.Node) -> tuple[bool, list[dict]]:
@@ -1438,65 +1497,11 @@ def _eval_node(g: rdflib.Graph, node: rdflib.term.Node) -> tuple[bool, list[dict
     if ms_node is not None:
         return _eval_match_statement(g, ms_node)
 
-    # ── Quantity conditions ───────────────────────────────────────────────────
-    for rdf_type, cmp_op, sym in _TWO_ARG_OPS:
-        if (node, RDF.type, rdf_type) in g:
-            cond = _eval_two_arg(g, node, rdf_type, cmp_op, sym)
-            return cond["passed"], [cond]
-
-    if (node, RDF.type, _QUAN.quaninRange) in g or (node, RDF.type, _QUAN.inRange) in g:
-        cond = _eval_range(g, node)
-        return cond["passed"], [cond]
-
-    # ── Set boolean conditions ────────────────────────────────────────────────
-    if (node, RDF.type, _SET.setisMember) in g:
-        return _eval_is_member(g, node)
-    if (node, RDF.type, _SET.setintersectsWith) in g:
-        return _eval_intersects_with(g, node)
-    if (node, RDF.type, _SET.setincludedIn) in g:
-        return _eval_included_in(g, node)
-    if (node, RDF.type, _SET.setforAll) in g:
-        return _eval_for_all(g, node)
-    if (node, RDF.type, _SET.elementOf) in g:
-        return _eval_element_of(g, node)
-    if (node, RDF.type, _SET.empty) in g:
-        return _eval_empty_set(g, node)
-
-    # ── ICM expectation types ────────────────────────────────────────────────
-    if (node, RDF.type, _ICM.DeliveryExpectation) in g:
-        return _eval_delivery_expectation(g, node)
-    if (node, RDF.type, _ICM.PropertyExpectation) in g:
-        return _eval_property_expectation(g, node)
-    if (node, RDF.type, _ICM.ObservationReportingExpectation) in g:
-        return _eval_observation_reporting_expectation(g, node)
-    if (node, RDF.type, _IG.GuaranteeReportingExpectation) in g:
-        return _eval_guarantee_reporting_expectation(g, node)
-    if (node, RDF.type, _IV.ValidityReportingExpectation) in g:
-        return _eval_validity_reporting_expectation(g, node)
-
-    # ── Validity function ─────────────────────────────────────────────────────
-    if (node, RDF.type, _IV.ivvalidityOf) in g:
-        return _eval_validity_of(g, node)
-
-    # ── Guarantee report ──────────────────────────────────────────────────────
-    if (node, RDF.type, _IG.igGuaranteeReport) in g:
-        return _eval_guarantee_report(g, node)
-
-    # ── IntentSpecification functions ─────────────────────────────────────────
-    if (node, RDF.type, _INSP.inspvalueSelected) in g:
-        return _eval_value_selected(g, node)
-    if (node, RDF.type, _INSP.inspvalueSelectedFor) in g:
-        return _eval_value_selected_for(g, node)
-    if (node, RDF.type, _INSP.inspchosenAny) in g:
-        return _eval_chosen_any(g, node)
-    if (node, RDF.type, _INSP.inspchosenAll) in g:
-        return _eval_chosen_all(g, node)
-    if (node, RDF.type, _INSP.inspchosenAllFor) in g:
-        return _eval_chosen_all_for(g, node)
-    if (node, RDF.type, _INSP.inspchosenAnyFor) in g:
-        return _eval_chosen_any_for(g, node)
-    if (node, RDF.type, _INSP.inspusedVocabularyFor) in g:
-        return _eval_used_vocabulary_for(g, node)
+    # ── Type-based dispatch (single fetch, O(1) lookup) ──────────────────────
+    for t in g.objects(node, RDF.type):
+        handler = _TYPE_DISPATCH.get(t)
+        if handler is not None:
+            return handler(g, node)
 
     # ── Unknown/opaque — pass silently (no evaluable content) ────────────────
     return True, []
