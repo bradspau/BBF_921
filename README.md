@@ -278,4 +278,3 @@ ruff check src/
 - **Schema init not called at startup.** `schema_init.py` (`ensure_dataset` + `load_ontology`) is not invoked from the FastAPI lifespan. The Docker Compose setup pre-creates the dataset via `FUSEKI_DATASET_1`; the ontology TTL files are not loaded automatically in the container.
 - **No pagination link headers.** Pagination is cursor-based (`offset`/`limit`) but `Link` headers (RFC 5988) are not emitted — only `X-Total-Count` and `X-Result-Count`.
 - **`expressionValue` is opaque.** The API stores and returns `expressionValue` as a plain string literal. The intent handler loads it into a temporary evaluation graph for reasoning, but the ontology inference is a PoC stub.
-- **Negotiation flow is a 3-step stub.** The ProbeIntent / Judge / BestPropose negotiation is implemented to a level sufficient for conformance testing, not for production intent-arbitration use.
