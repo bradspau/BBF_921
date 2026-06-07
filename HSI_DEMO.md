@@ -334,10 +334,10 @@ graph as before, so the result will match the most recently submitted values.
 The `handlerState` graph lives in the **`tmf921`** dataset (the same one the API uses).
 `tmf921-eval` is a separate in-memory dataset — it does not hold handler state.
 
-The OODA working-memory graph is visible at:
+The OODA working-memory graph is visible at (replace the fake UUID with your actual `$INTENT_ID`):
 
 ```
-http://localhost:3030/tmf921/data?graph=http://tmforum.org/api/v5/intents/<INTENT_ID>/handlerState
+http://localhost:3030/tmf921/data?graph=http://tmforum.org/api/v5/intents/xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx/handlerState
 ```
 
 Or via SPARQL — open the Fuseki UI at `http://localhost:3030`, select the **`tmf921`** dataset,
