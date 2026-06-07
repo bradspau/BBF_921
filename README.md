@@ -43,6 +43,13 @@ cp env.template .env
 | `FUSEKI_BASE_URL` | `http://localhost:3030` | Fuseki HTTP base URL (no trailing slash) |
 | `FUSEKI_DATASET` | `tmf921` | Fuseki dataset name |
 | `LOG_LEVEL` | `info` | uvicorn log level |
+| `FUSEKI_CONNECT_TIMEOUT` | `5.0` | Fuseki connect timeout in seconds |
+| `FUSEKI_READ_TIMEOUT` | `30.0` | Fuseki read timeout in seconds |
+| `FUSEKI_MAX_RETRIES` | `3` | Max retries on transient Fuseki errors (502/503/504 + connect errors) |
+| `FUSEKI_RETRY_DELAY` | `0.5` | Base retry delay in seconds (exponential backoff + jitter) |
+| `EVAL_TIMEOUT_SECONDS` | `30` | Max wall time for a single evaluation cycle before returning Degraded |
+| `EVAL_MAX_TURTLE_BYTES` | `524288` | Maximum `expressionValue` size in bytes (512 KB) |
+| `MAX_OBS_PER_METRIC` | `10` | Max observations retained per metric per intent |
 
 Pass them on the command line or export from `.env` before starting the server.
 
@@ -151,13 +158,99 @@ The API publishes 10 event types to registered hub callbacks:
 
 ## Architecture
 
+### Component layers
+
+```mermaid
+flowchart TD
+    Client(["REST Client"])
+    Hub(["Hub Subscriber"])
+
+    subgraph api["API Layer — FastAPI"]
+        R["Routers\nintent · intentReport · intentSpec\nobservation · hub"]
+    end
+
+    subgraph svc["Service Layer"]
+        IS["IntentService\nStateMachine"]
+        NS["NotificationService"]
+        RS["IntentReportService / IntentSpecService"]
+    end
+
+    subgraph hdl["Handler Layer  ·  OODA loop"]
+        D["Dispatcher\nbackground asyncio task"]
+        E["Evaluator\nTIO expression eval\nRDFLib · thread executor"]
+        SW["StateWriter\nOODA working memory"]
+        OS["ObservationStore\nprune on write"]
+    end
+
+    subgraph repo["Repository Layer"]
+        IR["IntentRepository"]
+        RR["IntentReportRepository"]
+        SR["IntentSpecRepository"]
+        HR["HubRepository"]
+    end
+
+    subgraph graph["Graph Layer"]
+        FC["FusekiClient\nSPARQL 1.1 · Graph Store Protocol\nretry / backoff / split timeouts"]
+    end
+
+    FDB[("Apache Jena Fuseki\nTDB2 persistent named graphs")]
+
+    Client -->|"HTTP REST"| R
+    R --> IS & RS & OS
+    IS -->|"schedule eval"| D
+    IS --> NS & IR
+    RS --> RR & SR
+    NS -->|"POST callback"| Hub
+    D -->|"asyncio.wait_for + timeout"| E
+    E -->|"evaluate_turtle_conditions"| SW
+    SW --> RR & NS
+    OS --> FC
+    IR & RR & SR & HR --> FC
+    FC -->|"SPARQL · GSP"| FDB
 ```
-FastAPI app
-  └─ Routers (intent, intentReport, intentSpec, hub)
-       └─ Services (IntentService, NotificationService)
-            └─ Repositories (IntentRepository, IntentReportRepository, …)
-                 └─ FusekiClient (SPARQL 1.1 + Graph Store Protocol)
-                      └─ Apache Jena Fuseki TDB2
+
+### Named graph layout (Fuseki TDB2)
+
+| Named graph URI | Contents |
+|---|---|
+| `…/intents/{uuid}` | Intent resource + expression Turtle |
+| `…/intentSpecifications/{uuid}` | IntentSpecification resource |
+| `…/reports/{uuid}` | IntentReport from last evaluation cycle |
+| `…/intents/{uuid}/handlerState` | OODA working memory — per-condition evaluation facts |
+| `…/intents/{uuid}/observations` | Metric observations (bounded to `MAX_OBS_PER_METRIC` per metric) |
+| `…/hubs` | Hub subscription records |
+| `…/ontology` | Loaded TIO/TMF ontology files |
+
+Base prefix: `http://tmforum.org/api/v5`
+
+### Evaluation pipeline
+
+Each write or observation triggers a background evaluation via `Dispatcher → Evaluator → StateWriter`:
+
+```
+expressionValue (Turtle)  ──┐
+                             ├─► RDFLib Graph ──► pre-processing pipeline
+observations Turtle        ──┘                         │
+                                    _resolve_metric_refs (single-pass obs index)
+                                    _compute_math_functions
+                                    _compute_set_constructors
+                                    _resolve_validity_chains
+                                    _derive_guarantee_states
+                                    _derive_ext_types
+                                          │
+                                    _find_evaluation_roots
+                                          │
+                              ┌───────────┴────────────┐
+                          tree eval               flat-scan fallback
+                          (log:allOf/anyOf/…)     (bare quantity nodes)
+                                          │
+                               {intentHandlingState, reason, conditions[]}
+                                          │
+                                    StateWriter ──► handlerState graph
+                                          │
+                                    IntentReport ──► Fuseki
+                                          │
+                                    NotificationService ──► hub callbacks
 ```
 
 ---
