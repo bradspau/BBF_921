@@ -193,6 +193,12 @@ The `intentHandlingReason` lists the five metric conditions that failed because 
 
 ### Submit all five (happy path)
 
+> **All steps must run in the same shell session** so that `$INTENT_ID` is in scope.
+> If you open a new terminal, re-export it first:
+> ```bash
+> INTENT_ID="<id from step 1 output>"
+> ```
+
 Each `POST /observation` writes a `met:Observation` to the intent's observation graph
 and immediately schedules a re-evaluation.
 
@@ -226,7 +232,7 @@ curl -s -X POST "$BASE" -H "Content-Type: application/json" \
 ## Step 4 — Verify Fulfilled state
 
 ```bash
-sleep 1
+sleep 2
 
 curl -s "http://localhost:8000/tmf-api/intentManagement/v5/intent/$INTENT_ID/intentReport" \
   | python3 -m json.tool
