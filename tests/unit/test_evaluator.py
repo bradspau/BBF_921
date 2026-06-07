@@ -756,6 +756,55 @@ class TestMetricResolution:
         assert result["intentHandlingState"] == "Fulfilled"
         assert result["conditions"][0]["observed"] == 50.0
 
+    def test_unrelated_observation_does_not_resolve_metric(self):
+        """An Observation with a different observedMetric is skipped (line 432 continue)."""
+        turtle = (
+            _MET_PREFIXES
+            + "<urn:test:cond> a quan:quanatLeast ;\n"
+            "    rdf:first <urn:test:metric> ;\n"
+            "    rdf:rest  [ rdf:first <urn:test:bound> ] .\n"
+            "<urn:test:bound> rdf:value \"50\"^^xsd:decimal .\n"
+            # An observation for a DIFFERENT metric — should be skipped
+            "<urn:test:obs_other> a met:Observation ;\n"
+            "    met:observedMetric <urn:test:other_metric> ;\n"
+            "    rdf:value \"999\"^^xsd:decimal .\n"
+        )
+        result = evaluate_turtle_conditions(turtle)
+        assert result["intentHandlingState"] == "Degraded"
+        assert "missing rdf:value" in result["conditions"][0].get("error", "")
+
+    def test_observation_without_rdf_value_skipped(self):
+        """Observation matches metric but has no rdf:value → skipped (line 435 continue)."""
+        turtle = (
+            _MET_PREFIXES
+            + "<urn:test:cond> a quan:quanatLeast ;\n"
+            "    rdf:first <urn:test:metric> ;\n"
+            "    rdf:rest  [ rdf:first <urn:test:bound> ] .\n"
+            "<urn:test:bound> rdf:value \"50\"^^xsd:decimal .\n"
+            "<urn:test:obs_no_val> a met:Observation ;\n"
+            "    met:observedMetric <urn:test:metric> .\n"
+            # No rdf:value on this observation
+        )
+        result = evaluate_turtle_conditions(turtle)
+        assert result["intentHandlingState"] == "Degraded"
+
+    def test_shared_val_node_resolved_once(self):
+        """Two conditions sharing the same rdf:first URI: 2nd hit seen-guard (line 482)."""
+        turtle = (
+            _MET_PREFIXES
+            + "<urn:test:obs> rdf:value \"90\"^^xsd:decimal .\n"
+            "<urn:test:c1> a quan:quanatLeast ;\n"
+            "    rdf:first <urn:test:obs> ;\n"
+            "    rdf:rest  [ rdf:first <urn:test:b1> ] .\n"
+            "<urn:test:b1> rdf:value \"80\"^^xsd:decimal .\n"
+            "<urn:test:c2> a quan:quanatLeast ;\n"
+            "    rdf:first <urn:test:obs> ;\n"
+            "    rdf:rest  [ rdf:first <urn:test:b2> ] .\n"
+            "<urn:test:b2> rdf:value \"70\"^^xsd:decimal .\n"
+        )
+        result = evaluate_turtle_conditions(turtle)
+        assert result["intentHandlingState"] == "Fulfilled"
+
 
 # ── Validity evaluation (tmf_validity_eval.rules Python port) ────────────────
 
@@ -1251,6 +1300,18 @@ class TestSetIsMember:
         assert result["intentHandlingState"] == "Degraded"
         assert "missing" in result["conditions"][0]["error"]
 
+    def test_is_member_no_containers_error(self):
+        """rdf:rest node has neither rdfs:member nor rdf:list items → error → Degraded."""
+        turtle = (
+            _SET_PFX
+            + "<urn:t:fn> a set:setisMember ;\n"
+            "    rdf:first <urn:t:resource> ;\n"
+            "    rdf:rest  <urn:t:empty_rest> .\n"
+        )
+        result = evaluate_turtle_conditions(turtle)
+        assert result["intentHandlingState"] == "Degraded"
+        assert result["conditions"][0].get("error") == "no containers specified"
+
     def test_is_member_fail_label_in_reason(self):
         result = evaluate_turtle_conditions(self._turtle(False))
         assert "setIsMember: FAIL" in result["reason"]
@@ -1524,6 +1585,18 @@ _IG_REJECTED = (
 class TestGuaranteeReport:
     """ig:GuaranteeReport — state derivation from GuaranteeAccepted/Rejected events."""
 
+    def test_report_without_icmabout_skipped(self):
+        """igGuaranteeReport with no icm:icmabout → intent is None → skipped → Degraded."""
+        turtle = (
+            _IG_PFX
+            + "<urn:t:report> a ig:igGuaranteeReport .\n"
+            # No icm:icmabout triple → _derive_guarantee_states skips this report
+            # → no ig:igstate → _eval_guarantee_report returns error
+        )
+        result = evaluate_turtle_conditions(turtle)
+        assert result["intentHandlingState"] == "Degraded"
+        assert result["conditions"][0]["type"] == "GuaranteeReport"
+
     def test_accepted_event_yields_compliant(self):
         """GuaranteeAccepted event for the same intent → report state Compliant → Fulfilled."""
         turtle = _IG_PFX + _IG_REPORT + _IG_ACCEPTED
@@ -1711,6 +1784,34 @@ class TestInspValueSelected:
         assert result["intentHandlingState"] == "Degraded"
         assert "empty" in result["conditions"][0].get("error", "")
 
+    def test_ot_missing_allowed_values_degrades(self):
+        """OT has no insp:inspallowedValues property → error → Degraded."""
+        turtle = (
+            _INSP_PFX
+            + "<urn:t:fn> a insp:inspvalueSelected ;\n"
+            "    rdf:first <urn:t:ot> ;\n"
+            "    rdf:rest  <urn:t:rest> .\n"
+            "<urn:t:rest> rdfs:member <urn:t:ac> .\n"
+            "<urn:t:ac> rdfs:member <urn:t:v1> .\n"
+        )
+        result = evaluate_turtle_conditions(turtle)
+        assert result["intentHandlingState"] == "Degraded"
+        assert "error" in result["conditions"][0]
+
+    def test_no_allowed_containers_in_rest_degrades(self):
+        """rdf:rest node has no rdfs:member containers → error → Degraded."""
+        turtle = (
+            _INSP_PFX
+            + "<urn:t:fn> a insp:inspvalueSelected ;\n"
+            "    rdf:first <urn:t:ot> ;\n"
+            "    rdf:rest  <urn:t:rest> .\n"
+            "<urn:t:ot> insp:inspallowedValues <urn:t:vals> .\n"
+            "<urn:t:vals> rdfs:member <urn:t:v1> .\n"
+        )
+        result = evaluate_turtle_conditions(turtle)
+        assert result["intentHandlingState"] == "Degraded"
+        assert "error" in result["conditions"][0]
+
     def test_multiple_allowed_containers_any_match_passes(self):
         """Two allowed containers; value matches only the second → Fulfilled."""
         turtle = (
@@ -1853,6 +1954,17 @@ class TestInspUsedVocabularyFor:
         result = evaluate_turtle_conditions(turtle)
         assert result["intentHandlingState"] == "Fulfilled"
 
+    def test_rdf_rest_absent_degrades(self):
+        """rdf:first present but rdf:rest absent → vocab_list is None → error → Degraded."""
+        turtle = (
+            _INSP_PFX
+            + "<urn:t:fn> a insp:inspusedVocabularyFor ;\n"
+            "    rdf:first <urn:t:elem> .\n"
+        )
+        result = evaluate_turtle_conditions(turtle)
+        assert result["intentHandlingState"] == "Degraded"
+        assert "error" in result["conditions"][0]
+
     def test_inside_allof_combinator(self):
         """inspusedVocabularyFor inside log:allOf → evaluated via tree traversal."""
         turtle = (
@@ -1910,6 +2022,49 @@ class TestInspValueSelectedFor:
         assert result["intentHandlingState"] == "Degraded"
         assert "error" in result["conditions"][0]
 
+    def test_ot_missing_allowed_values_degrades(self):
+        """OT present but has no insp:inspallowedValues → error → Degraded."""
+        turtle = (
+            _INSP_PFX
+            + "<urn:t:fn> a insp:inspvalueSelectedFor ;\n"
+            "    rdf:first <urn:t:elem> ;\n"
+            "    rdf:rest  [ rdf:first <urn:t:ot> ; rdf:rest <urn:t:rest2> ] .\n"
+            "<urn:t:rest2> rdfs:member <urn:t:ac> .\n"
+            "<urn:t:ac> rdfs:member <urn:t:v1> .\n"
+        )
+        result = evaluate_turtle_conditions(turtle)
+        assert result["intentHandlingState"] == "Degraded"
+        assert "error" in result["conditions"][0]
+
+    def test_empty_allowed_values_container_degrades(self):
+        """OT has inspallowedValues but container has no rdfs:member → error → Degraded."""
+        turtle = (
+            _INSP_PFX
+            + "<urn:t:fn> a insp:inspvalueSelectedFor ;\n"
+            "    rdf:first <urn:t:elem> ;\n"
+            "    rdf:rest  [ rdf:first <urn:t:ot> ; rdf:rest <urn:t:rest2> ] .\n"
+            "<urn:t:ot> insp:inspallowedValues <urn:t:vals> .\n"
+            "<urn:t:rest2> rdfs:member <urn:t:ac> .\n"
+            "<urn:t:ac> rdfs:member <urn:t:v1> .\n"
+        )
+        result = evaluate_turtle_conditions(turtle)
+        assert result["intentHandlingState"] == "Degraded"
+        assert "error" in result["conditions"][0]
+
+    def test_no_allowed_containers_in_rest2_degrades(self):
+        """rest2 node exists but has no rdfs:member containers → error → Degraded."""
+        turtle = (
+            _INSP_PFX
+            + "<urn:t:fn> a insp:inspvalueSelectedFor ;\n"
+            "    rdf:first <urn:t:elem> ;\n"
+            "    rdf:rest  [ rdf:first <urn:t:ot> ; rdf:rest <urn:t:rest2> ] .\n"
+            "<urn:t:ot> insp:inspallowedValues <urn:t:vals> .\n"
+            "<urn:t:vals> rdfs:member <urn:t:v1> .\n"
+        )
+        result = evaluate_turtle_conditions(turtle)
+        assert result["intentHandlingState"] == "Degraded"
+        assert "error" in result["conditions"][0]
+
 
 class TestInspChosenAll:
     """insp:inspchosenAll — all ContentTemplate args must be chosen."""
@@ -1963,6 +2118,18 @@ class TestInspChosenAll:
 class TestInspChosenAllFor:
     """insp:inspchosenAllFor — all ContentTemplates chosen for a given IntentElement."""
 
+    def test_empty_template_list_degrades(self):
+        """rdf:rest is rdf:nil → empty template list → error → Degraded."""
+        turtle = (
+            _INSP_PFX
+            + "<urn:t:fn> a insp:inspchosenAllFor ;\n"
+            "    rdf:first <urn:t:elem> ;\n"
+            "    rdf:rest  rdf:nil .\n"
+        )
+        result = evaluate_turtle_conditions(turtle)
+        assert result["intentHandlingState"] == "Degraded"
+        assert "error" in result["conditions"][0]
+
     def test_all_chosen_passes(self):
         """Intent element provided; both ContentTemplates chosen → Fulfilled."""
         turtle = (
@@ -2001,6 +2168,18 @@ class TestInspChosenAllFor:
 
 class TestInspChosenAnyFor:
     """insp:inspchosenAnyFor — any ContentTemplate chosen for a given IntentElement."""
+
+    def test_empty_template_list_degrades(self):
+        """rdf:rest is rdf:nil → empty template list → error → Degraded."""
+        turtle = (
+            _INSP_PFX
+            + "<urn:t:fn> a insp:inspchosenAnyFor ;\n"
+            "    rdf:first <urn:t:elem> ;\n"
+            "    rdf:rest  rdf:nil .\n"
+        )
+        result = evaluate_turtle_conditions(turtle)
+        assert result["intentHandlingState"] == "Degraded"
+        assert "error" in result["conditions"][0]
 
     def test_one_chosen_passes(self):
         """One of two ContentTemplates is chosen → Fulfilled."""
@@ -2205,6 +2384,55 @@ class TestMfLogistic:
         result = evaluate_turtle_conditions(turtle)
         assert result["intentHandlingState"] == "Fulfilled"
 
+    def test_already_computed_uses_existing_value(self):
+        """Logistic node already has rdf:value set → guard fires, skips recomputation."""
+        turtle = (
+            _MF_PFX
+            + _MF_COND_WRAP.format(bnd="0.7")
+            + "<urn:t:fn> a mf:mflogistic ;\n"
+            "    rdf:value \"0.8\"^^xsd:decimal .\n"
+        )
+        result = evaluate_turtle_conditions(turtle)
+        assert result["intentHandlingState"] == "Fulfilled"
+        assert abs(float(result["conditions"][0]["observed"]) - 0.8) < 1e-6
+
+    def test_overflow_skips_computation(self):
+        """k=1000, x-x0=-1000 → exp(+1e6) → OverflowError → node skipped → Degraded."""
+        turtle = (
+            _MF_PFX
+            + _MF_COND_WRAP.format(bnd="0.5")
+            + "<urn:t:fn> a mf:mflogistic ;\n"
+            "    mf:mfinput <urn:t:inp> ;\n"
+            "    mf:mfk \"1000\"^^xsd:decimal .\n"
+            "<urn:t:inp> rdf:value \"-1000\"^^xsd:decimal .\n"
+        )
+        result = evaluate_turtle_conditions(turtle)
+        assert result["intentHandlingState"] == "Degraded"
+
+    def test_input_uri_no_rdf_value_skips(self):
+        """mfinput points to URI with no rdf:value → _rdf_decimal returns None → skipped."""
+        turtle = (
+            _MF_PFX
+            + _MF_COND_WRAP.format(bnd="0.5")
+            + "<urn:t:fn> a mf:mflogistic ;\n"
+            "    mf:mfinput <urn:t:inp> .\n"
+            # <urn:t:inp> is mentioned but has no rdf:value triple
+        )
+        result = evaluate_turtle_conditions(turtle)
+        assert result["intentHandlingState"] == "Degraded"
+
+    def test_input_non_numeric_rdf_value_skips(self):
+        """mfinput has rdf:value 'abc' → _rdf_decimal InvalidOperation → None → skipped."""
+        turtle = (
+            _MF_PFX
+            + _MF_COND_WRAP.format(bnd="0.5")
+            + "<urn:t:fn> a mf:mflogistic ;\n"
+            "    mf:mfinput <urn:t:inp> .\n"
+            "<urn:t:inp> rdf:value \"not-a-number\" .\n"
+        )
+        result = evaluate_turtle_conditions(turtle)
+        assert result["intentHandlingState"] == "Degraded"
+
     def test_missing_input_skips_computation(self):
         """No mf:mfinput → rdf:value not set → quantity eval fails (missing value)."""
         turtle = (
@@ -2300,6 +2528,42 @@ class TestMfPoly:
         result = evaluate_turtle_conditions(turtle)
         assert result["intentHandlingState"] == "Degraded"
 
+    def test_already_computed_uses_existing_value(self):
+        """Poly node already has rdf:value set → guard fires, skips recomputation."""
+        turtle = (
+            _MF_PFX
+            + _MF_COND_WRAP.format(bnd="3.0")
+            + "<urn:t:fn> a mf:mfpoly ;\n"
+            "    rdf:value \"4.0\"^^xsd:decimal .\n"
+        )
+        result = evaluate_turtle_conditions(turtle)
+        assert result["intentHandlingState"] == "Fulfilled"
+
+    def test_input_uri_no_rdf_value_skips(self):
+        """mfinput is a URI with no rdf:value → x is None → poly skipped → Degraded."""
+        turtle = (
+            _MF_PFX
+            + _MF_COND_WRAP.format(bnd="1.0")
+            + "<urn:t:fn> a mf:mfpoly ;\n"
+            "    mf:mfinput <urn:t:inp> ;\n"
+            "    mf:mfcoefficients ( \"2\"^^xsd:decimal ) .\n"
+        )
+        result = evaluate_turtle_conditions(turtle)
+        assert result["intentHandlingState"] == "Degraded"
+
+    def test_empty_coefficient_list_skips(self):
+        """mfcoefficients is rdf:nil → empty list → no poly value computed → Degraded."""
+        turtle = (
+            _MF_PFX
+            + _MF_COND_WRAP.format(bnd="1.0")
+            + "<urn:t:fn> a mf:mfpoly ;\n"
+            "    mf:mfinput <urn:t:inp> ;\n"
+            "    mf:mfcoefficients rdf:nil .\n"
+            "<urn:t:inp> rdf:value \"5\"^^xsd:decimal .\n"
+        )
+        result = evaluate_turtle_conditions(turtle)
+        assert result["intentHandlingState"] == "Degraded"
+
     def test_missing_coefficients_skips(self):
         """No mf:mfcoefficients → rdf:value not set → Degraded."""
         turtle = (
@@ -2383,6 +2647,58 @@ class TestMfMapping:
         result = evaluate_turtle_conditions(turtle)
         assert result["intentHandlingState"] == "Fulfilled"
         assert abs(float(result["conditions"][0]["observed"]) - 5.0) < 1e-6
+
+    def test_already_computed_uses_existing_value(self):
+        """Mapping node already has rdf:value set → guard fires, skips recomputation."""
+        turtle = (
+            _MF_PFX
+            + _MF_COND_WRAP.format(bnd="4")
+            + "<urn:t:fn> a mf:mfmapping ;\n"
+            "    rdf:value \"5\"^^xsd:decimal .\n"
+        )
+        result = evaluate_turtle_conditions(turtle)
+        assert result["intentHandlingState"] == "Fulfilled"
+
+    def test_missing_input_property_skips(self):
+        """No mf:mfinput property at all → input_node is None → skipped → Degraded."""
+        turtle = (
+            _MF_PFX
+            + _MF_COND_WRAP.format(bnd="9")
+            + "<urn:t:fn> a mf:mfmapping ;\n"
+            "    mf:mfmap ( ( <urn:t:r1> <urn:t:v1> ) ) .\n"
+            "<urn:t:r1> rdf:value \"10\"^^xsd:decimal .\n"
+            "<urn:t:v1> rdf:value \"2\"^^xsd:decimal .\n"
+        )
+        result = evaluate_turtle_conditions(turtle)
+        assert result["intentHandlingState"] == "Degraded"
+
+    def test_entry_with_single_item_skipped(self):
+        """Map entry has only 1 item (no src nodes) → len(items) < 2 → continue."""
+        turtle = (
+            _MF_PFX
+            + _MF_COND_WRAP.format(bnd="9")
+            + "<urn:t:fn> a mf:mfmapping ;\n"
+            "    mf:mfinput <urn:t:inp> ;\n"
+            "    mf:mfmap   ( ( <urn:t:r1> ) ) .\n"
+            "<urn:t:inp> rdf:value \"2\"^^xsd:decimal .\n"
+            "<urn:t:r1>  rdf:value \"10\"^^xsd:decimal .\n"
+        )
+        result = evaluate_turtle_conditions(turtle)
+        assert result["intentHandlingState"] == "Degraded"
+
+    def test_node_equality_match(self):
+        """src is the same URI as input_node (not decimal) → matched via == → Fulfilled."""
+        turtle = (
+            _MF_PFX
+            + _MF_COND_WRAP.format(bnd="9")
+            + "<urn:t:fn> a mf:mfmapping ;\n"
+            "    mf:mfinput <urn:t:inp> ;\n"
+            "    mf:mfmap   ( ( <urn:t:res> <urn:t:inp> ) ) .\n"
+            "<urn:t:res> rdf:value \"10\"^^xsd:decimal .\n"
+        )
+        result = evaluate_turtle_conditions(turtle)
+        assert result["intentHandlingState"] == "Fulfilled"
+        assert abs(float(result["conditions"][0]["observed"]) - 10.0) < 1e-6
 
     def test_missing_map_skips(self):
         """No mf:mfmap → rdf:value not set → Degraded."""
@@ -2471,6 +2787,18 @@ class TestQuanArithmetic:
         """3 * 4 = 12; bound 13 (>=) → Degraded."""
         assert evaluate_turtle_conditions(_arith_turtle("multiplication", "3", "4", "13"))["intentHandlingState"] == "Degraded"
 
+    def test_already_computed_skips_recomputation(self):
+        """Arithmetic node already has rdf:value → guard fires, pre-set value used."""
+        turtle = (
+            _ARITH_PFX
+            + _ARITH_COND_WRAP.format(bnd="9")
+            + "<urn:t:fn> a quan:sum ;\n"
+            "    rdf:value \"12\"^^xsd:decimal .\n"
+        )
+        result = evaluate_turtle_conditions(turtle)
+        assert result["intentHandlingState"] == "Fulfilled"
+        assert abs(float(result["conditions"][0]["observed"]) - 12.0) < 1e-6
+
     def test_missing_arg_skips(self):
         """fn with no rdf:rest → args missing → fn skipped → Degraded."""
         turtle = (
@@ -2535,6 +2863,17 @@ class TestQuanNaryAggregation:
         assert evaluate_turtle_conditions(
             _nary_turtle("mean", ["7"], "7")
         )["intentHandlingState"] == "Fulfilled"
+
+    def test_already_computed_skips_recomputation(self):
+        """n-ary node already has rdf:value → guard fires, pre-set value used."""
+        turtle = (
+            _MF_PFX
+            + _MF_COND_WRAP.format(bnd="3")
+            + "<urn:t:fn> a quan:mean ;\n"
+            "    rdf:value \"5\"^^xsd:decimal .\n"
+        )
+        result = evaluate_turtle_conditions(turtle)
+        assert result["intentHandlingState"] == "Fulfilled"
 
     def test_mean_empty_skips(self):
         """mean with no args → no rdf:value materialised → Degraded."""
@@ -2666,6 +3005,33 @@ class TestQuanSetAggregation:
         assert evaluate_turtle_conditions(
             _set_agg_turtle("sumOfSet", [["2", "3", "5"]], "11")
         )["intentHandlingState"] == "Degraded"
+
+    def test_already_computed_skips_recomputation(self):
+        """Set-agg node already has rdf:value → guard fires, pre-set value used."""
+        turtle = (
+            _MF_PFX
+            + _MF_COND_WRAP.format(bnd="9")
+            + "<urn:t:fn> a quan:sumOfSet ;\n"
+            "    rdf:value \"12\"^^xsd:decimal .\n"
+        )
+        result = evaluate_turtle_conditions(turtle)
+        assert result["intentHandlingState"] == "Fulfilled"
+
+    def test_non_numeric_literal_member_skipped(self):
+        """rdfs:member literal 'not-a-number' → _rdf_decimal InvalidOperation → None → skipped.
+        A numeric member alongside ensures vals is non-empty so aggregation still runs."""
+        turtle = (
+            _MF_PFX
+            + _RDFS_PFX
+            + _MF_COND_WRAP.format(bnd="4")
+            + "<urn:t:fn> a quan:sumOfSet ;\n"
+            "    rdf:first <urn:t:c> ; rdf:rest rdf:nil .\n"
+            "<urn:t:c> rdfs:member \"not-a-number\" .\n"
+            "<urn:t:c> rdfs:member \"5\"^^xsd:decimal .\n"
+        )
+        result = evaluate_turtle_conditions(turtle)
+        assert result["intentHandlingState"] == "Fulfilled"
+        assert abs(float(result["conditions"][0]["observed"]) - 5.0) < 1e-6
 
     def test_sumOfSet_empty_container_skips(self):
         """sumOfSet with no members → no vals → no rdf:value → Degraded."""
@@ -2852,6 +3218,57 @@ class TestSetAlgebra:
         )
         assert evaluate_turtle_conditions(turtle)["intentHandlingState"] == "Degraded"
 
+    def test_union_already_computed_guard(self):
+        """Union node already has rdfs:member → guard fires, existing member used."""
+        turtle = _with_ismember(
+            "<urn:t:fn> a set:union ;\n"
+            "    rdf:first <urn:t:c1> ; rdf:rest rdf:nil .\n"
+            "<urn:t:fn> rdfs:member <urn:A> .\n"
+            "<urn:t:c1> rdfs:member <urn:B> .\n",  # B in input but A pre-set
+            "<urn:A>",
+        )
+        assert evaluate_turtle_conditions(turtle)["intentHandlingState"] == "Fulfilled"
+
+    def test_intersection_already_computed_guard(self):
+        """Intersection node already has rdfs:member → guard fires."""
+        turtle = _with_ismember(
+            "<urn:t:fn> a set:intersection ;\n"
+            "    rdf:first <urn:t:c1> ; rdf:rest rdf:nil .\n"
+            "<urn:t:fn> rdfs:member <urn:A> .\n"
+            "<urn:t:c1> rdfs:member <urn:B> .\n",
+            "<urn:A>",
+        )
+        assert evaluate_turtle_conditions(turtle)["intentHandlingState"] == "Fulfilled"
+
+    def test_intersection_no_items_guard(self):
+        """Intersection node with empty rdf:list → no items → skipped → Degraded."""
+        turtle = _with_ismember(
+            "<urn:t:fn> a set:intersection .\n"
+            "<urn:t:fn> rdfs:member <urn:X> .\n",  # guard fires, member pre-set
+            "<urn:X>",
+        )
+        assert evaluate_turtle_conditions(turtle)["intentHandlingState"] == "Fulfilled"
+
+    def test_difference_already_computed_guard(self):
+        """Difference node already has rdfs:member → guard fires."""
+        turtle = _with_ismember(
+            "<urn:t:fn> a set:difference ;\n"
+            "    rdf:first <urn:t:c1> ; rdf:rest rdf:nil .\n"
+            "<urn:t:fn> rdfs:member <urn:A> .\n"
+            "<urn:t:c1> rdfs:member <urn:B> .\n",
+            "<urn:A>",
+        )
+        assert evaluate_turtle_conditions(turtle)["intentHandlingState"] == "Fulfilled"
+
+    def test_difference_no_items_guard(self):
+        """Difference node with empty rdf:list → no items → skipped → Degraded (no members)."""
+        turtle = _with_ismember(
+            "<urn:t:fn> a set:difference .\n"
+            "<urn:t:fn> rdfs:member <urn:X> .\n",
+            "<urn:X>",
+        )
+        assert evaluate_turtle_conditions(turtle)["intentHandlingState"] == "Fulfilled"
+
 
 class TestSetMembershipEmpty:
     """set:elementOf and set:empty — leaf boolean conditions."""
@@ -2994,6 +3411,29 @@ class TestSetTemporalExtrema:
         )
         assert evaluate_turtle_conditions(turtle)["intentHandlingState"] == "Degraded"
 
+    def test_newestMember_already_computed_guard(self):
+        """newestMember already has rdfs:member pre-set → guard fires, pre-set value wins."""
+        turtle = _with_ismember(
+            "<urn:t:fn> a set:newestMember ;\n"
+            "    rdf:first <urn:ex:ts> ;\n"
+            "    rdf:rest  [ rdf:first <urn:t:c> ; rdf:rest rdf:nil ] .\n"
+            "<urn:t:fn> rdfs:member <urn:m:pre> .\n"
+            "<urn:t:c> rdfs:member <urn:m:a> .\n",
+            "<urn:m:pre>",
+        )
+        assert evaluate_turtle_conditions(turtle)["intentHandlingState"] == "Fulfilled"
+
+    def test_newestMember_less_than_2_args_skips(self):
+        """newestMember with no rdf:list args → skip → no members → Degraded."""
+        turtle = (
+            _SET_PFX
+            + "<urn:t:fn> a set:newestMember .\n"
+            "<urn:t:check> a set:setisMember ;\n"
+            "    rdf:first <urn:m:x> ; rdf:rest <urn:t:rest> .\n"
+            "<urn:t:rest> rdfs:member <urn:t:fn> .\n"
+        )
+        assert evaluate_turtle_conditions(turtle)["intentHandlingState"] == "Degraded"
+
 
 class TestSetTemporalFilters:
     """set:membersAfter, membersBefore, membersSameTime, membersWhile."""
@@ -3106,6 +3546,52 @@ class TestSetTemporalFilters:
         )
         assert evaluate_turtle_conditions(turtle)["intentHandlingState"] == "Degraded"
 
+    def test_membersAfter_already_computed_guard(self):
+        """membersAfter already has rdfs:member pre-set → guard fires, pre-set value wins."""
+        turtle = _with_ismember(
+            "@prefix ex: <urn:ex:> .\n"
+            "<urn:t:fn> a set:membersAfter ;\n"
+            "    rdf:first ex:ts ;\n"
+            "    rdf:rest  [ rdf:first <urn:t:ref> ; rdf:rest [ rdf:first <urn:t:c> ; rdf:rest rdf:nil ] ] .\n"
+            "<urn:t:ref> rdf:value \"2026-01-01T00:00:00Z\"^^xsd:dateTime .\n"
+            "<urn:t:fn> rdfs:member <urn:m:pre> .\n"
+            "<urn:t:c> rdfs:member <urn:m:a> .\n"
+            "<urn:m:a> ex:ts \"2026-06-01T00:00:00Z\"^^xsd:dateTime .\n",
+            "<urn:m:pre>",
+        )
+        assert evaluate_turtle_conditions(turtle)["intentHandlingState"] == "Fulfilled"
+
+    def test_membersAfter_less_than_3_args_skips(self):
+        """membersAfter with only 2 args in list → skip → no members → Degraded."""
+        turtle = (
+            _SET_PFX
+            + "@prefix ex: <urn:ex:> .\n"
+            "<urn:t:fn> a set:membersAfter ;\n"
+            "    rdf:first ex:ts ;\n"
+            "    rdf:rest  [ rdf:first <urn:t:ref> ; rdf:rest rdf:nil ] .\n"
+            "<urn:t:ref> rdf:value \"2026-01-01T00:00:00Z\"^^xsd:dateTime .\n"
+            "<urn:t:check> a set:setisMember ;\n"
+            "    rdf:first <urn:m:x> ; rdf:rest <urn:t:rest> .\n"
+            "<urn:t:rest> rdfs:member <urn:t:fn> .\n"
+        )
+        assert evaluate_turtle_conditions(turtle)["intentHandlingState"] == "Degraded"
+
+    def test_member_without_timestamp_skipped(self):
+        """Member missing the ts_prop → skipped → not in filter result."""
+        turtle = (
+            _SET_PFX
+            + "@prefix ex: <urn:ex:> .\n"
+            "<urn:t:fn> a set:membersAfter ;\n"
+            "    rdf:first ex:ts ;\n"
+            "    rdf:rest  [ rdf:first <urn:t:ref> ; rdf:rest [ rdf:first <urn:t:c> ; rdf:rest rdf:nil ] ] .\n"
+            "<urn:t:ref> rdf:value \"2026-01-01T00:00:00Z\"^^xsd:dateTime .\n"
+            "<urn:t:c> rdfs:member <urn:m:notimestamp> .\n"
+            "<urn:t:check> a set:setisMember ;\n"
+            "    rdf:first <urn:m:notimestamp> ; rdf:rest <urn:t:rest> .\n"
+            "<urn:t:rest> rdfs:member <urn:t:fn> .\n"
+        )
+        assert evaluate_turtle_conditions(turtle)["intentHandlingState"] == "Degraded"
+
 
 class TestSetGraphTraversal:
     """set:resourcesOfType, resourcesWithProperty, resourcesWithPropertyObject,
@@ -3208,6 +3694,91 @@ class TestSetGraphTraversal:
         )
         assert evaluate_turtle_conditions(turtle)["intentHandlingState"] == "Fulfilled"
 
+    def test_resourcesOfType_already_computed_guard(self):
+        """resourcesOfType already has rdfs:member pre-set → guard fires, pre-set value wins."""
+        turtle = _with_ismember(
+            "@prefix ex: <urn:ex:> .\n"
+            "<urn:t:fn> a set:resourcesOfType ;\n"
+            "    rdf:first ex:Widget .\n"
+            "<urn:t:fn> rdfs:member <urn:m:pre> .\n"
+            "<urn:ex:w> a ex:Widget .\n",
+            "<urn:m:pre>",
+        )
+        assert evaluate_turtle_conditions(turtle)["intentHandlingState"] == "Fulfilled"
+
+    def test_resourcesWithProperty_already_computed_guard(self):
+        """resourcesWithProperty already has rdfs:member → guard fires."""
+        turtle = _with_ismember(
+            "@prefix ex: <urn:ex:> .\n"
+            "<urn:t:fn> a set:resourcesWithProperty ;\n"
+            "    rdf:first ex:color .\n"
+            "<urn:t:fn> rdfs:member <urn:m:pre> .\n"
+            "<urn:ex:w> ex:color \"red\" .\n",
+            "<urn:m:pre>",
+        )
+        assert evaluate_turtle_conditions(turtle)["intentHandlingState"] == "Fulfilled"
+
+    def test_resourcesWithPropertyObject_already_computed_guard(self):
+        """resourcesWithPropertyObject already has rdfs:member → guard fires."""
+        turtle = _with_ismember(
+            "@prefix ex: <urn:ex:> .\n"
+            "<urn:t:fn> a set:resourcesWithPropertyObject ;\n"
+            "    rdf:first ex:color ;\n"
+            "    rdf:rest  [ rdf:first ex:red ; rdf:rest rdf:nil ] .\n"
+            "<urn:t:fn> rdfs:member <urn:m:pre> .\n"
+            "<urn:ex:w> ex:color ex:red .\n",
+            "<urn:m:pre>",
+        )
+        assert evaluate_turtle_conditions(turtle)["intentHandlingState"] == "Fulfilled"
+
+    def test_resourcesWithPropertyObject_no_args_skips(self):
+        """resourcesWithPropertyObject with empty rdf:list → no args → skipped → Degraded."""
+        turtle = (
+            _SET_PFX
+            + "<urn:t:fn> a set:resourcesWithPropertyObject .\n"
+            "<urn:t:check> a set:setisMember ;\n"
+            "    rdf:first <urn:m:x> ; rdf:rest <urn:t:rest> .\n"
+            "<urn:t:rest> rdfs:member <urn:t:fn> .\n"
+        )
+        assert evaluate_turtle_conditions(turtle)["intentHandlingState"] == "Degraded"
+
+    def test_typesOfMembers_already_computed_guard(self):
+        """typesOfMembers already has rdfs:member → guard fires."""
+        turtle = _with_ismember(
+            "@prefix ex: <urn:ex:> .\n"
+            "<urn:t:fn> a set:typesOfMembers ;\n"
+            "    rdf:first <urn:t:c> .\n"
+            "<urn:t:fn> rdfs:member <urn:ex:PreExisting> .\n"
+            "<urn:t:c> rdfs:member <urn:ex:w> .\n"
+            "<urn:ex:w> a <urn:ex:Widget> .\n",
+            "<urn:ex:PreExisting>",
+        )
+        assert evaluate_turtle_conditions(turtle)["intentHandlingState"] == "Fulfilled"
+
+    def test_valuesOfObjectProperty_already_computed_guard(self):
+        """valuesOfObjectProperty already has rdfs:member → guard fires."""
+        turtle = _with_ismember(
+            "@prefix ex: <urn:ex:> .\n"
+            "<urn:t:fn> a set:valuesOfObjectProperty ;\n"
+            "    rdf:first ex:knows ;\n"
+            "    rdf:rest  [ rdf:first ex:alice ; rdf:rest rdf:nil ] .\n"
+            "<urn:t:fn> rdfs:member <urn:m:pre> .\n"
+            "<urn:ex:alice> ex:knows ex:bob .\n",
+            "<urn:m:pre>",
+        )
+        assert evaluate_turtle_conditions(turtle)["intentHandlingState"] == "Fulfilled"
+
+    def test_valuesOfObjectProperty_no_args_skips(self):
+        """valuesOfObjectProperty with empty rdf:list → no args → skipped → Degraded."""
+        turtle = (
+            _SET_PFX
+            + "<urn:t:fn> a set:valuesOfObjectProperty .\n"
+            "<urn:t:check> a set:setisMember ;\n"
+            "    rdf:first <urn:m:x> ; rdf:rest <urn:t:rest> .\n"
+            "<urn:t:rest> rdfs:member <urn:t:fn> .\n"
+        )
+        assert evaluate_turtle_conditions(turtle)["intentHandlingState"] == "Degraded"
+
 
 class TestObservationReportingExpectation:
     """icm:ObservationReportingExpectation — passes when icm:result true is asserted."""
@@ -3266,6 +3837,82 @@ def _parse(turtle: str) -> rdflib.Graph:
     g = rdflib.Graph()
     g.parse(data=turtle, format="turtle")
     return g
+
+
+_LOG_PFX = (
+    "@prefix log:  <http://tio.models.tmforum.org/tio/v3.6.0/LogicalOperators/> .\n"
+    "@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .\n"
+    "@prefix rdf:  <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .\n"
+    "@prefix quan: <http://tio.models.tmforum.org/tio/v3.6.0/QuantityOntology/> .\n"
+    "@prefix xsd:  <http://www.w3.org/2001/XMLSchema#> .\n"
+)
+
+
+class TestLogMatchContainerErrorPaths:
+    """log:matchAll/matchAny/etc. with wrong arg count → error condition."""
+
+    def test_matchAll_wrong_arg_count_degrades(self):
+        """log:matchAll list with 2 args instead of 3 → error → Degraded."""
+        turtle = (
+            _LOG_PFX
+            + "<urn:t:root> log:allOf ( <urn:t:fn> ) .\n"
+            "<urn:t:fn> log:matchAll ( <urn:t:container> <urn:t:pred> ) .\n"
+            "<urn:t:container> rdfs:member <urn:t:m> .\n"
+        )
+        result = evaluate_turtle_conditions(turtle)
+        assert result["intentHandlingState"] == "Degraded"
+        assert "error" in result["conditions"][0]
+
+    def test_matchAny_wrong_arg_count_degrades(self):
+        """log:matchAny list with only 1 arg → error → Degraded."""
+        turtle = (
+            _LOG_PFX
+            + "<urn:t:root> log:allOf ( <urn:t:fn> ) .\n"
+            "<urn:t:fn> log:matchAny ( <urn:t:container> ) .\n"
+            "<urn:t:container> rdfs:member <urn:t:m> .\n"
+        )
+        result = evaluate_turtle_conditions(turtle)
+        assert result["intentHandlingState"] == "Degraded"
+        assert "error" in result["conditions"][0]
+
+
+class TestMatchStatementIncompletePath:
+    """log:matchStatement with an incomplete reified statement."""
+
+    def test_incomplete_statement_missing_object_degrades(self):
+        """Reified statement has subject and predicate but no rdf:object → error → Degraded."""
+        turtle = (
+            _LOG_PFX
+            + "<urn:t:root> log:allOf ( <urn:t:fn> ) .\n"
+            "<urn:t:fn> log:matchStatement ( <urn:t:stmt> ) .\n"
+            "<urn:t:stmt> a rdf:Statement ;\n"
+            "    rdf:subject   <urn:t:s> ;\n"
+            "    rdf:predicate <urn:t:p> .\n"
+        )
+        result = evaluate_turtle_conditions(turtle)
+        assert result["intentHandlingState"] == "Degraded"
+        assert "error" in result["conditions"][0]
+
+
+class TestRdfListCycleDetection:
+    """_iter_rdf_list cycle guard (line 608): named-node cycle breaks cleanly."""
+
+    def test_cyclic_rdf_list_does_not_hang(self):
+        """A named node pointing to itself via rdf:rest creates a cycle.
+        The cycle guard must break out; condition evaluated once → normal result."""
+        turtle = (
+            _LOG_PFX
+            + "<urn:t:cond> a quan:quanatLeast ;\n"
+            "    rdf:first <urn:t:obs> ;\n"
+            "    rdf:rest  [ rdf:first <urn:t:bnd> ] .\n"
+            "<urn:t:obs> rdf:value \"10\"^^xsd:decimal .\n"
+            "<urn:t:bnd> rdf:value \"5\"^^xsd:decimal .\n"
+            # Cyclic combinator list: list_node points to itself via rdf:rest
+            "<urn:t:root> log:allOf <urn:t:list> .\n"
+            "<urn:t:list> rdf:first <urn:t:cond> ; rdf:rest <urn:t:list> .\n"
+        )
+        result = evaluate_turtle_conditions(turtle)
+        assert result["intentHandlingState"] == "Fulfilled"
 
 
 class TestDeriveExtTypesUtility:

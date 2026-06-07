@@ -77,6 +77,10 @@
 - `gsp_put(graph_uri, turtle)` preferred over SPARQL DROP+INSERT for named graph replacement — atomic, one HTTP call
 - TIO namespace authority: `http://tio.models.tmforum.org/tio/v3.6.0/{Module}/` — canonical prefixes in `ontology/jena-rules/tio_all.rules`; all seed/ontology files must use `http://` (not `https://`) and include `/tio/v3.6.0/`
 - OODA Decide step queries failed conditions: `SELECT ?type ?observed ?bound WHERE { GRAPH <…/handlerState> { <intent> imo:hasConditionResult ?c . ?c imo:conditionPassed "false"^^xsd:boolean ; a ?type ; imo:observedValue ?observed ; imo:boundValue ?bound } }`
+- Evaluator pre-processing pipeline order: `_resolve_metric_refs` → `_compute_math_functions` → `_compute_set_constructors` → `_resolve_validity_chains` → `_derive_guarantee_states` → `_derive_ext_types` → `_eval_node`/`_flat_scan`
+- Adding a new boolean condition type: register in `_eval_node` dispatch AND `_flat_scan` type list AND `_SIMPLE_FAIL_TYPES` — missing the last causes `KeyError: 'operator'` in `_fail_label`
+- Set constructor functions (union, intersection, etc.) materialise their result as `rdfs:member` triples on the fn node itself — `_container_members(g, fn)` then returns the derived set; guard with `if list(g.objects(fn, RDFS.member))` to stay idempotent
+- `QuantityOntology.ttl` defines both `quan:quanatLeast` (legacy) and `quan:atLeast` (short-name) as distinct URIs — both must be registered in `_TWO_ARG_OPS`; same pattern applies to all six comparators
 
 ## Python/RDFLib Testing Gotchas
 - `Decimal("NaN")` does NOT raise `InvalidOperation` — use `"not-a-number"` string in tests targeting the non-numeric error path
