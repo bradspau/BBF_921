@@ -1870,6 +1870,245 @@ class TestInspUsedVocabularyFor:
         assert result["intentHandlingState"] == "Fulfilled"
 
 
+class TestInspValueSelectedFor:
+    """insp:inspvalueSelectedFor — value chosen for (IntentElement, OT) pair."""
+
+    def test_matching_value_passes(self):
+        """OT's allowedValues member is in the allowed container → Fulfilled."""
+        turtle = (
+            _INSP_PFX
+            + "<urn:t:fn> a insp:inspvalueSelectedFor ;\n"
+            "    rdf:first <urn:t:elem> ;\n"
+            "    rdf:rest  [ rdf:first <urn:t:ot> ; rdf:rest <urn:t:rest2> ] .\n"
+            "<urn:t:ot> insp:inspallowedValues <urn:t:vals> .\n"
+            "<urn:t:vals> rdfs:member <urn:t:v1> .\n"
+            "<urn:t:rest2> rdfs:member <urn:t:ac> .\n"
+            "<urn:t:ac> rdfs:member <urn:t:v1> .\n"
+        )
+        result = evaluate_turtle_conditions(turtle)
+        assert result["intentHandlingState"] == "Fulfilled"
+
+    def test_no_overlap_degrades(self):
+        """OT's values and allowed container are disjoint → Degraded."""
+        turtle = (
+            _INSP_PFX
+            + "<urn:t:fn> a insp:inspvalueSelectedFor ;\n"
+            "    rdf:first <urn:t:elem> ;\n"
+            "    rdf:rest  [ rdf:first <urn:t:ot> ; rdf:rest <urn:t:rest2> ] .\n"
+            "<urn:t:ot> insp:inspallowedValues <urn:t:vals> .\n"
+            "<urn:t:vals> rdfs:member <urn:t:v1> .\n"
+            "<urn:t:rest2> rdfs:member <urn:t:ac> .\n"
+            "<urn:t:ac> rdfs:member <urn:t:v2> .\n"
+        )
+        result = evaluate_turtle_conditions(turtle)
+        assert result["intentHandlingState"] == "Degraded"
+
+    def test_missing_ot_degrades(self):
+        """No OT in rdf:rest → error → Degraded."""
+        turtle = _INSP_PFX + "<urn:t:fn> a insp:inspvalueSelectedFor ;\n    rdf:first <urn:t:elem> .\n"
+        result = evaluate_turtle_conditions(turtle)
+        assert result["intentHandlingState"] == "Degraded"
+        assert "error" in result["conditions"][0]
+
+
+class TestInspChosenAll:
+    """insp:inspchosenAll — all ContentTemplate args must be chosen."""
+
+    def test_all_chosen_passes(self):
+        """Two ContentTemplates both with inspcontent → Fulfilled."""
+        turtle = (
+            _INSP_PFX
+            + "<urn:t:fn> a insp:inspchosenAll ;\n"
+            "    rdf:first <urn:t:ct1> ;\n"
+            "    rdf:rest [ rdf:first <urn:t:ct2> ; rdf:rest rdf:nil ] .\n"
+            "<urn:t:ct1> a insp:inspContentTemplate ; insp:inspcontent <urn:t:x1> .\n"
+            "<urn:t:ct2> a insp:inspContentTemplate ; insp:inspcontent <urn:t:x2> .\n"
+        )
+        result = evaluate_turtle_conditions(turtle)
+        assert result["intentHandlingState"] == "Fulfilled"
+
+    def test_one_not_chosen_degrades(self):
+        """Second ContentTemplate has no inspcontent → Degraded."""
+        turtle = (
+            _INSP_PFX
+            + "<urn:t:fn> a insp:inspchosenAll ;\n"
+            "    rdf:first <urn:t:ct1> ;\n"
+            "    rdf:rest [ rdf:first <urn:t:ct2> ; rdf:rest rdf:nil ] .\n"
+            "<urn:t:ct1> a insp:inspContentTemplate ; insp:inspcontent <urn:t:x1> .\n"
+            "<urn:t:ct2> a insp:inspContentTemplate .\n"
+        )
+        result = evaluate_turtle_conditions(turtle)
+        assert result["intentHandlingState"] == "Degraded"
+
+    def test_chosen_via_handling_domain_passes(self):
+        """ContentTemplate chosen via chosenHandlingDomain → Fulfilled."""
+        turtle = (
+            _INSP_PFX
+            + "<urn:t:fn> a insp:inspchosenAll ;\n"
+            "    rdf:first <urn:t:ct1> ; rdf:rest rdf:nil .\n"
+            "<urn:t:ct1> a insp:inspContentTemplate ;\n"
+            "    insp:chosenHandlingDomain <urn:t:domain> .\n"
+        )
+        result = evaluate_turtle_conditions(turtle)
+        assert result["intentHandlingState"] == "Fulfilled"
+
+    def test_no_args_degrades(self):
+        """No args → error → Degraded."""
+        turtle = _INSP_PFX + "<urn:t:fn> a insp:inspchosenAll .\n"
+        result = evaluate_turtle_conditions(turtle)
+        assert result["intentHandlingState"] == "Degraded"
+        assert "error" in result["conditions"][0]
+
+
+class TestInspChosenAllFor:
+    """insp:inspchosenAllFor — all ContentTemplates chosen for a given IntentElement."""
+
+    def test_all_chosen_passes(self):
+        """Intent element provided; both ContentTemplates chosen → Fulfilled."""
+        turtle = (
+            _INSP_PFX
+            + "<urn:t:fn> a insp:inspchosenAllFor ;\n"
+            "    rdf:first <urn:t:elem> ;\n"
+            "    rdf:rest [ rdf:first <urn:t:ct1> ;\n"
+            "               rdf:rest [ rdf:first <urn:t:ct2> ; rdf:rest rdf:nil ] ] .\n"
+            "<urn:t:ct1> a insp:inspContentTemplate ; insp:inspcontent <urn:t:x1> .\n"
+            "<urn:t:ct2> a insp:inspContentTemplate ; insp:inspcontent <urn:t:x2> .\n"
+        )
+        result = evaluate_turtle_conditions(turtle)
+        assert result["intentHandlingState"] == "Fulfilled"
+
+    def test_one_not_chosen_degrades(self):
+        """One ContentTemplate not chosen → Degraded."""
+        turtle = (
+            _INSP_PFX
+            + "<urn:t:fn> a insp:inspchosenAllFor ;\n"
+            "    rdf:first <urn:t:elem> ;\n"
+            "    rdf:rest [ rdf:first <urn:t:ct1> ;\n"
+            "               rdf:rest [ rdf:first <urn:t:ct2> ; rdf:rest rdf:nil ] ] .\n"
+            "<urn:t:ct1> a insp:inspContentTemplate ; insp:inspcontent <urn:t:x1> .\n"
+            "<urn:t:ct2> a insp:inspContentTemplate .\n"
+        )
+        result = evaluate_turtle_conditions(turtle)
+        assert result["intentHandlingState"] == "Degraded"
+
+    def test_missing_rest_degrades(self):
+        """No rdf:rest → error → Degraded."""
+        turtle = _INSP_PFX + "<urn:t:fn> a insp:inspchosenAllFor ;\n    rdf:first <urn:t:elem> .\n"
+        result = evaluate_turtle_conditions(turtle)
+        assert result["intentHandlingState"] == "Degraded"
+        assert "error" in result["conditions"][0]
+
+
+class TestInspChosenAnyFor:
+    """insp:inspchosenAnyFor — any ContentTemplate chosen for a given IntentElement."""
+
+    def test_one_chosen_passes(self):
+        """One of two ContentTemplates is chosen → Fulfilled."""
+        turtle = (
+            _INSP_PFX
+            + "<urn:t:fn> a insp:inspchosenAnyFor ;\n"
+            "    rdf:first <urn:t:elem> ;\n"
+            "    rdf:rest [ rdf:first <urn:t:ct1> ;\n"
+            "               rdf:rest [ rdf:first <urn:t:ct2> ; rdf:rest rdf:nil ] ] .\n"
+            "<urn:t:ct1> a insp:inspContentTemplate .\n"
+            "<urn:t:ct2> a insp:inspContentTemplate ; insp:inspcontent <urn:t:x2> .\n"
+        )
+        result = evaluate_turtle_conditions(turtle)
+        assert result["intentHandlingState"] == "Fulfilled"
+
+    def test_none_chosen_degrades(self):
+        """No ContentTemplate is chosen → Degraded."""
+        turtle = (
+            _INSP_PFX
+            + "<urn:t:fn> a insp:inspchosenAnyFor ;\n"
+            "    rdf:first <urn:t:elem> ;\n"
+            "    rdf:rest [ rdf:first <urn:t:ct1> ; rdf:rest rdf:nil ] .\n"
+            "<urn:t:ct1> a insp:inspContentTemplate .\n"
+        )
+        result = evaluate_turtle_conditions(turtle)
+        assert result["intentHandlingState"] == "Degraded"
+
+    def test_missing_rest_degrades(self):
+        """No rdf:rest → error → Degraded."""
+        turtle = _INSP_PFX + "<urn:t:fn> a insp:inspchosenAnyFor ;\n    rdf:first <urn:t:elem> .\n"
+        result = evaluate_turtle_conditions(turtle)
+        assert result["intentHandlingState"] == "Degraded"
+        assert "error" in result["conditions"][0]
+
+
+_IG_IV_PFX = """\
+@prefix ig:   <http://tio.models.tmforum.org/tio/v3.6.0/IntentGuaranteeOntology/> .
+@prefix iv:   <http://tio.models.tmforum.org/tio/v3.6.0/IntentValidityOntology/> .
+@prefix icm:  <http://tio.models.tmforum.org/tio/v3.6.0/IntentCommonModel/> .
+@prefix rdf:  <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix xsd:  <http://www.w3.org/2001/XMLSchema#> .
+"""
+
+
+class TestGuaranteeReportingExpectation:
+    """ig:GuaranteeReportingExpectation — passes when icm:result true is asserted."""
+
+    def test_result_true_passes(self):
+        """icm:result true → Fulfilled."""
+        turtle = (
+            _IG_IV_PFX
+            + "<urn:t:fn> a ig:GuaranteeReportingExpectation ;\n"
+            "    icm:result true .\n"
+        )
+        result = evaluate_turtle_conditions(turtle)
+        assert result["intentHandlingState"] == "Fulfilled"
+        assert result["conditions"][0]["passed"] is True
+
+    def test_result_absent_degrades(self):
+        """No icm:result → Degraded."""
+        turtle = _IG_IV_PFX + "<urn:t:fn> a ig:GuaranteeReportingExpectation .\n"
+        result = evaluate_turtle_conditions(turtle)
+        assert result["intentHandlingState"] == "Degraded"
+        assert result["conditions"][0]["passed"] is False
+
+    def test_result_false_degrades(self):
+        """icm:result false → Degraded."""
+        turtle = (
+            _IG_IV_PFX
+            + "<urn:t:fn> a ig:GuaranteeReportingExpectation ;\n"
+            "    icm:result false .\n"
+        )
+        result = evaluate_turtle_conditions(turtle)
+        assert result["intentHandlingState"] == "Degraded"
+
+
+class TestValidityReportingExpectation:
+    """iv:ValidityReportingExpectation — passes when icm:result true is asserted."""
+
+    def test_result_true_passes(self):
+        """icm:result true → Fulfilled."""
+        turtle = (
+            _IG_IV_PFX
+            + "<urn:t:fn> a iv:ValidityReportingExpectation ;\n"
+            "    icm:result true .\n"
+        )
+        result = evaluate_turtle_conditions(turtle)
+        assert result["intentHandlingState"] == "Fulfilled"
+        assert result["conditions"][0]["passed"] is True
+
+    def test_result_absent_degrades(self):
+        """No icm:result → Degraded."""
+        turtle = _IG_IV_PFX + "<urn:t:fn> a iv:ValidityReportingExpectation .\n"
+        result = evaluate_turtle_conditions(turtle)
+        assert result["intentHandlingState"] == "Degraded"
+        assert result["conditions"][0]["passed"] is False
+
+    def test_result_false_degrades(self):
+        """icm:result false → Degraded."""
+        turtle = (
+            _IG_IV_PFX
+            + "<urn:t:fn> a iv:ValidityReportingExpectation ;\n"
+            "    icm:result false .\n"
+        )
+        result = evaluate_turtle_conditions(turtle)
+        assert result["intentHandlingState"] == "Degraded"
+
+
 # ── Math function evaluation (tmf_mathfn_eval.rules Python port) ─────────────
 
 _MF_PFX = """\

@@ -83,11 +83,27 @@ IntentSpecification evaluation (tmf_insp_eval rules Python port):
   insp:inspvalueSelected    — passes if any value in OT's inspallowedValues
                               container is also a member of any allowed container
                               in the rdf:rest list.
+  insp:inspvalueSelectedFor — passes if for the IntentElement (rdf:first) and
+                              OT (rdf:rest/rdf:first), OT's inspallowedValues
+                              shares a member with any container in rdf:rest/rdf:rest.
   insp:inspchosenAny        — passes if any rdfs:member ContentTemplate of the
                               function node has an insp:inspcontent property.
+  insp:inspchosenAll        — passes if ALL ContentTemplate args (rdf:list off
+                              function node) are chosen (have insp:inspcontent or
+                              insp:chosenHandlingDomain).
+  insp:inspchosenAllFor     — passes if for the IntentElement (rdf:first), ALL
+                              ContentTemplate args (rdf:rest list) are chosen.
+  insp:inspchosenAnyFor     — passes if for the IntentElement (rdf:first), ANY
+                              ContentTemplate arg (rdf:rest list) is chosen.
   insp:inspusedVocabularyFor — passes if any term from any vocabulary container
                               in the rdf:rest list appears as a predicate on the
                               intent element given in rdf:first.
+
+Reporting expectation types:
+  ig:GuaranteeReportingExpectation  — passes if icm:result "true"^^xsd:boolean
+                                      is asserted; defaults to Degraded when absent.
+  iv:ValidityReportingExpectation   — passes if icm:result "true"^^xsd:boolean
+                                      is asserted; defaults to Degraded when absent.
 
 Math function pre-processing (tmf_mathfn_eval.rules Python port):
   _compute_math_functions runs after metric resolution; it finds mf:mflogistic,
@@ -1175,6 +1191,87 @@ def _eval_used_vocabulary_for(g: rdflib.Graph, node: rdflib.term.Node) -> tuple[
     return passed, [{"type": "usedVocabularyFor", "passed": passed}]
 
 
+def _eval_value_selected_for(g: rdflib.Graph, node: rdflib.term.Node) -> tuple[bool, list[dict]]:
+    """
+    insp:inspvalueSelectedFor — passes if OT's inspallowedValues shares a member
+    with any allowed container in the remaining args.
+
+    Structure (RDF list):
+      rdf:first             → IntentElement (scoping context)
+      rdf:rest/rdf:first    → OT (ObjectTemplate with insp:inspallowedValues)
+      rdf:rest/rdf:rest     → node whose rdfs:member items are allowed containers
+    """
+    rest = g.value(node, RDF.rest)
+    ot = g.value(rest, RDF.first) if rest is not None else None
+    rest2 = g.value(rest, RDF.rest) if rest is not None else None
+    if ot is None:
+        return False, [{"type": "valueSelectedFor", "error": "missing OT (rdf:rest/rdf:first)", "passed": False}]
+    vals_container = g.value(ot, _INSP.inspallowedValues)
+    if vals_container is None:
+        return False, [{"type": "valueSelectedFor", "error": "OT missing insp:inspallowedValues", "passed": False}]
+    chosen = frozenset(g.objects(vals_container, RDFS.member))
+    if not chosen:
+        return False, [{"type": "valueSelectedFor", "error": "empty inspallowedValues container", "passed": False}]
+    allowed_containers = list(g.objects(rest2, RDFS.member)) if rest2 is not None else []
+    if not allowed_containers:
+        return False, [{"type": "valueSelectedFor", "error": "no allowed containers in remaining args", "passed": False}]
+    passed = any(chosen & frozenset(g.objects(ac, RDFS.member)) for ac in allowed_containers)
+    return passed, [{"type": "valueSelectedFor", "passed": passed}]
+
+
+def _is_ct_chosen(g: rdflib.Graph, ct: rdflib.term.Node) -> bool:
+    """True if a ContentTemplate node is considered 'chosen'."""
+    return (
+        (ct, RDF.type, _INSP.inspContentTemplate) in g
+        and (
+            g.value(ct, _INSP.inspcontent) is not None
+            or g.value(ct, _INSP.chosenHandlingDomain) is not None
+        )
+    )
+
+
+def _eval_chosen_all(g: rdflib.Graph, node: rdflib.term.Node) -> tuple[bool, list[dict]]:
+    """
+    insp:inspchosenAll — passes if ALL ContentTemplate args (rdf:list off the
+    function node) are chosen (have insp:inspcontent or insp:chosenHandlingDomain).
+    """
+    args = list(_iter_rdf_list(g, node))
+    if not args:
+        return False, [{"type": "chosenAll", "error": "no ContentTemplate args", "passed": False}]
+    passed = all(_is_ct_chosen(g, a) for a in args)
+    return passed, [{"type": "chosenAll", "arg_count": len(args), "passed": passed}]
+
+
+def _eval_chosen_all_for(g: rdflib.Graph, node: rdflib.term.Node) -> tuple[bool, list[dict]]:
+    """
+    insp:inspchosenAllFor — passes if for the IntentElement (rdf:first), ALL
+    ContentTemplate args in the rdf:rest list are chosen.
+    """
+    rest = g.value(node, RDF.rest)
+    if rest is None:
+        return False, [{"type": "chosenAllFor", "error": "missing rdf:rest", "passed": False}]
+    templates = list(_iter_rdf_list(g, rest))
+    if not templates:
+        return False, [{"type": "chosenAllFor", "error": "no ContentTemplate args", "passed": False}]
+    passed = all(_is_ct_chosen(g, t) for t in templates)
+    return passed, [{"type": "chosenAllFor", "template_count": len(templates), "passed": passed}]
+
+
+def _eval_chosen_any_for(g: rdflib.Graph, node: rdflib.term.Node) -> tuple[bool, list[dict]]:
+    """
+    insp:inspchosenAnyFor — passes if for the IntentElement (rdf:first), ANY
+    ContentTemplate arg in the rdf:rest list is chosen.
+    """
+    rest = g.value(node, RDF.rest)
+    if rest is None:
+        return False, [{"type": "chosenAnyFor", "error": "missing rdf:rest", "passed": False}]
+    templates = list(_iter_rdf_list(g, rest))
+    if not templates:
+        return False, [{"type": "chosenAnyFor", "error": "no ContentTemplate args", "passed": False}]
+    passed = any(_is_ct_chosen(g, t) for t in templates)
+    return passed, [{"type": "chosenAnyFor", "template_count": len(templates), "passed": passed}]
+
+
 def _eval_element_of(g: rdflib.Graph, node: rdflib.term.Node) -> tuple[bool, list[dict]]:
     """
     set:elementOf — true if rdf:first resource is an rdfs:member of ALL
@@ -1212,6 +1309,34 @@ def _eval_observation_reporting_expectation(
     result = g.value(node, _ICM.result)
     passed = result == rdflib.Literal(True)
     return passed, [{"type": "ObservationReportingExpectation",
+                     "result": str(result) if result is not None else None,
+                     "passed": passed}]
+
+
+def _eval_guarantee_reporting_expectation(
+    g: rdflib.Graph, node: rdflib.term.Node
+) -> tuple[bool, list[dict]]:
+    """
+    ig:GuaranteeReportingExpectation — passes if icm:result "true"^^xsd:boolean
+    has been asserted on the node.  Absent result → Degraded.
+    """
+    result = g.value(node, _ICM.result)
+    passed = result == rdflib.Literal(True)
+    return passed, [{"type": "GuaranteeReportingExpectation",
+                     "result": str(result) if result is not None else None,
+                     "passed": passed}]
+
+
+def _eval_validity_reporting_expectation(
+    g: rdflib.Graph, node: rdflib.term.Node
+) -> tuple[bool, list[dict]]:
+    """
+    iv:ValidityReportingExpectation — passes if icm:result "true"^^xsd:boolean
+    has been asserted on the node.  Absent result → Degraded.
+    """
+    result = g.value(node, _ICM.result)
+    passed = result == rdflib.Literal(True)
+    return passed, [{"type": "ValidityReportingExpectation",
                      "result": str(result) if result is not None else None,
                      "passed": passed}]
 
@@ -1315,6 +1440,10 @@ def _eval_node(g: rdflib.Graph, node: rdflib.term.Node) -> tuple[bool, list[dict
         return _eval_property_expectation(g, node)
     if (node, RDF.type, _ICM.ObservationReportingExpectation) in g:
         return _eval_observation_reporting_expectation(g, node)
+    if (node, RDF.type, _IG.GuaranteeReportingExpectation) in g:
+        return _eval_guarantee_reporting_expectation(g, node)
+    if (node, RDF.type, _IV.ValidityReportingExpectation) in g:
+        return _eval_validity_reporting_expectation(g, node)
 
     # ── Validity function ─────────────────────────────────────────────────────
     if (node, RDF.type, _IV.ivvalidityOf) in g:
@@ -1327,8 +1456,16 @@ def _eval_node(g: rdflib.Graph, node: rdflib.term.Node) -> tuple[bool, list[dict
     # ── IntentSpecification functions ─────────────────────────────────────────
     if (node, RDF.type, _INSP.inspvalueSelected) in g:
         return _eval_value_selected(g, node)
+    if (node, RDF.type, _INSP.inspvalueSelectedFor) in g:
+        return _eval_value_selected_for(g, node)
     if (node, RDF.type, _INSP.inspchosenAny) in g:
         return _eval_chosen_any(g, node)
+    if (node, RDF.type, _INSP.inspchosenAll) in g:
+        return _eval_chosen_all(g, node)
+    if (node, RDF.type, _INSP.inspchosenAllFor) in g:
+        return _eval_chosen_all_for(g, node)
+    if (node, RDF.type, _INSP.inspchosenAnyFor) in g:
+        return _eval_chosen_any_for(g, node)
     if (node, RDF.type, _INSP.inspusedVocabularyFor) in g:
         return _eval_used_vocabulary_for(g, node)
 
@@ -1405,9 +1542,12 @@ def _flat_scan(g: rdflib.Graph) -> list[dict]:
         _SET.setisMember, _SET.setintersectsWith, _SET.setincludedIn, _SET.setforAll,
         _SET.elementOf, _SET.empty,
         _ICM.DeliveryExpectation, _ICM.PropertyExpectation, _ICM.ObservationReportingExpectation,
+        _IG.GuaranteeReportingExpectation, _IV.ValidityReportingExpectation,
         _IV.ivvalidityOf,
         _IG.igGuaranteeReport,
-        _INSP.inspvalueSelected, _INSP.inspchosenAny, _INSP.inspusedVocabularyFor,
+        _INSP.inspvalueSelected, _INSP.inspvalueSelectedFor,
+        _INSP.inspchosenAny, _INSP.inspchosenAll, _INSP.inspchosenAllFor, _INSP.inspchosenAnyFor,
+        _INSP.inspusedVocabularyFor,
     ):
         for node in g.subjects(RDF.type, rdf_type):
             if node in excluded or node in seen:
@@ -1425,9 +1565,12 @@ _SIMPLE_FAIL_TYPES = frozenset([
     "setIsMember", "setIntersectsWith", "setIncludedIn", "setForAll",
     "elementOf", "empty",
     "DeliveryExpectation", "PropertyExpectation", "ObservationReportingExpectation",
+    "GuaranteeReportingExpectation", "ValidityReportingExpectation",
     "validityOf", "validityGate",
     "GuaranteeReport",
-    "valueSelected", "chosenAny", "usedVocabularyFor",
+    "valueSelected", "valueSelectedFor",
+    "chosenAny", "chosenAll", "chosenAllFor", "chosenAnyFor",
+    "usedVocabularyFor",
     "opaqueChildren",
 ])
 
