@@ -214,6 +214,22 @@ class TestBaseRepository:
         result = BaseRepository._deser_expr_value("JsonLdExpression", raw)
         assert result == raw
 
+    def test_opt_triple_none_returns_empty(self):
+        assert BaseRepository._opt_triple("<s>", "tmf:name", None) == ""
+
+    def test_opt_triple_value_returns_triple(self):
+        result = BaseRepository._opt_triple("<s>", "tmf:name", "hello")
+        assert "tmf:name" in result
+        assert '"hello"' in result
+
+    def test_opt_typed_triple_none_returns_empty(self):
+        assert BaseRepository._opt_typed_triple("<s>", "dcterms:created", None, "xsd:dateTime") == ""
+
+    def test_opt_typed_triple_value_returns_typed_triple(self):
+        result = BaseRepository._opt_typed_triple("<s>", "dcterms:created", "2024-01-01T00:00:00", "xsd:dateTime")
+        assert "^^xsd:dateTime" in result
+        assert "2024-01-01T00:00:00" in result
+
 
 # ── IntentRepository ──────────────────────────────────────────────────────────
 
@@ -381,6 +397,21 @@ class TestIntentRepository:
         assert result is None
 
     @respx.mock
+    async def test_update_typed_field_generates_xsd_datatype(self):
+        """statusChangeDate has typed=True — ensures the ^^xsd:dateTime branch is reached."""
+        row = _intent_binding()
+        respx.post(UPDATE_URL).mock(return_value=_sparql_ok())
+        respx.post(SPARQL_URL).mock(return_value=httpx.Response(200, json=_bindings([row])))
+        async with FusekiClient(FUSEKI, DATASET) as client:
+            repo = IntentRepository(client)
+            result = await repo.update(
+                INTENT_ID,
+                {"statusChangeDate": "2024-06-01T00:00:00+00:00"},
+                "2024-06-01T00:00:00+00:00",
+            )
+        assert result is not None
+
+    @respx.mock
     async def test_update_expression_patch(self):
         row = _intent_binding()
         respx.post(UPDATE_URL).mock(return_value=_sparql_ok())
@@ -502,6 +533,22 @@ class TestIntentReportRepository:
             result = await repo.create(INTENT_ID, REPORT_DATA)
         assert route.called
         assert result["id"] == REPORT_ID
+
+    @respx.mock
+    async def test_create_with_base_type_and_handling_state(self):
+        route = respx.post(UPDATE_URL).mock(return_value=_sparql_ok())
+        data = {
+            **REPORT_DATA,
+            "@baseType": "IntentReport",
+            "intentHandlingState": "FULFILLED",
+            "intentHandlingReason": "all conditions met",
+        }
+        async with FusekiClient(FUSEKI, DATASET) as client:
+            repo = IntentReportRepository(client)
+            result = await repo.create(INTENT_ID, data)
+        assert route.called
+        assert result["@baseType"] == "IntentReport"
+        assert result["intentHandlingState"] == "FULFILLED"
 
     @respx.mock
     async def test_get_by_id_found(self):

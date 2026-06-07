@@ -335,6 +335,26 @@ class TestUpdate:
             await service.update("no-such-id", {"name": "x"})
         assert exc.value.status_code == 404
 
+    @respx.mock
+    @pytest.mark.asyncio
+    async def test_update_secondary_not_found_raises_404(
+        self, service: IntentService
+    ) -> None:
+        """Covers the 404 at the repo.update() return path when the record is
+        deleted between get_by_id and the actual update (race condition)."""
+        sparql_mock = respx.post(SPARQL_URL)
+        sparql_mock.side_effect = [
+            # get_by_id confirms record exists
+            httpx.Response(200, json=_sparql([_intent_binding()])),
+            # get_by_id inside repo.update finds nothing (record deleted)
+            httpx.Response(200, json=_sparql([])),
+        ]
+        respx.post(UPDATE_URL).mock(return_value=_ok())
+
+        with pytest.raises(HTTPException) as exc:
+            await service.update(INTENT_ID, {"name": "gone"})
+        assert exc.value.status_code == 404
+
 
 # ── Delete ────────────────────────────────────────────────────────────────────
 
@@ -671,6 +691,26 @@ class TestIntentSpecService:
         )
         with pytest.raises(HTTPException) as exc:
             await spec_service.update("no-such", {"name": "x"})
+        assert exc.value.status_code == 404
+
+    @respx.mock
+    @pytest.mark.asyncio
+    async def test_update_secondary_not_found_raises_404(
+        self, spec_service: IntentSpecService
+    ) -> None:
+        """Covers the 404 at the repo.update() return path when the spec is
+        deleted between get_by_id and the actual update (race condition)."""
+        sparql_mock = respx.post(SPARQL_URL)
+        sparql_mock.side_effect = [
+            # get_by_id confirms spec exists
+            httpx.Response(200, json=_sparql([_spec_binding()])),
+            # get_by_id inside repo.update finds nothing (spec deleted)
+            httpx.Response(200, json=_sparql([])),
+        ]
+        respx.post(UPDATE_URL).mock(return_value=_ok())
+
+        with pytest.raises(HTTPException) as exc:
+            await spec_service.update(SPEC_ID, {"name": "gone"})
         assert exc.value.status_code == 404
 
     @respx.mock

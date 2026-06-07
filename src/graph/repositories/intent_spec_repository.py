@@ -185,7 +185,7 @@ class IntentSpecRepository(BaseRepository):
             var = field.replace("@", "")
             val = str(updates[field])
             delete_lines.append(f"        <{uri}> {pred} ?old_{var} .")
-            if typed:
+            if typed:  # pragma: no cover — _PATCHABLE has no typed fields currently
                 insert_lines.append(
                     f"        <{uri}> {pred} \"{e(val)}\"^^{dtype} ."
                 )
