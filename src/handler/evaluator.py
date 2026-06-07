@@ -131,8 +131,10 @@ Metric resolution patterns (replaces Jena tmf_metrics_eval.rules):
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import math
+import os
 from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
 from operator import ge, gt, le, lt, eq
@@ -186,6 +188,11 @@ _LOG_COMBINATORS: list[tuple[rdflib.URIRef, Callable]] = [
     (_LOG.noneOf, lambda bs: not any(bs)),
     (_LOG.oneOf,  lambda bs: sum(bs) == 1),
 ]
+
+_LOG_MATCH_PREDS: tuple[rdflib.URIRef, ...] = (
+    _LOG.match, _LOG.matchAll, _LOG.matchAny,
+    _LOG.matchNone, _LOG.matchOne, _LOG.matchStatement,
+)
 
 _INTENT_QUERY = """\
 {prefixes}
@@ -496,15 +503,37 @@ def _resolve_validity_chains(g: rdflib.Graph) -> None:
 
     Rule: (?X iv:ivsameValidityAs ?Y) (?Y iv:ivisValid ?B) → (?X iv:ivisValid ?B)
 
-    Runs to fixed-point to handle chains of arbitrary depth.
+    Runs to fixed-point to handle chains of arbitrary depth.  Nodes that
+    receive conflicting values from two or more targets are marked invalid so
+    the loop always terminates (bounded by the number of unresolved nodes).
     """
+    _FALSE = rdflib.Literal(False)
     changed = True
     while changed:
         changed = False
+        # Collect proposed values for each subject; track conflicts separately.
+        proposed: dict = {}
+        conflicted: set = set()
         for x, y in list(g.subject_objects(_IV.ivsameValidityAs)):
             b = g.value(y, _IV.ivisValid)
             if b is None:
                 continue
+            if x in conflicted:
+                continue
+            if x in proposed:
+                if proposed[x] != b:
+                    conflicted.add(x)
+                    del proposed[x]
+            else:
+                proposed[x] = b
+        # Mark conflicted nodes invalid.
+        for x in conflicted:
+            existing = g.value(x, _IV.ivisValid)
+            if existing != _FALSE:
+                g.set((x, _IV.ivisValid, _FALSE))
+                changed = True
+        # Apply non-conflicting proposals.
+        for x, b in proposed.items():
             existing = g.value(x, _IV.ivisValid)
             if existing != b:
                 g.set((x, _IV.ivisValid, b))
@@ -1496,6 +1525,12 @@ def _find_evaluation_roots(g: rdflib.Graph) -> list[rdflib.term.Node]:
             if subj not in inner and subj not in seen:
                 seen.add(subj)
                 roots.append(subj)
+    # Bare log:match-family nodes (no enclosing combinator) are also valid roots.
+    for pred in _LOG_MATCH_PREDS:
+        for subj in g.subjects(pred, None):
+            if subj not in inner and subj not in seen:
+                seen.add(subj)
+                roots.append(subj)
     return roots
 
 
@@ -1592,6 +1627,9 @@ def _fail_label(c: dict) -> str:
 
 # ── Public API ────────────────────────────────────────────────────────────────
 
+_MAX_TURTLE_BYTES: int = int(os.getenv("EVAL_MAX_TURTLE_BYTES", str(512 * 1024)))
+
+
 def evaluate_turtle_conditions(turtle_str: str) -> dict:
     """
     Parse TIO Turtle and evaluate the expression tree in Python.
@@ -1609,6 +1647,13 @@ def evaluate_turtle_conditions(turtle_str: str) -> dict:
         ]
       }
     """
+    if len(turtle_str.encode()) > _MAX_TURTLE_BYTES:
+        return {
+            "intentHandlingState": "Degraded",
+            "reason": f"Expression exceeds size limit ({_MAX_TURTLE_BYTES} bytes)",
+            "conditions": [],
+        }
+
     g = rdflib.Graph()
     try:
         g.parse(data=turtle_str, format="turtle")
@@ -1686,4 +1731,5 @@ async def evaluate_intent(intent_id: str, client: FusekiClient) -> dict:
 
     obs_turtle = await get_observations_turtle(intent_id, client)
     combined = expr_value + "\n" + obs_turtle if obs_turtle else expr_value
-    return evaluate_turtle_conditions(combined)
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(None, evaluate_turtle_conditions, combined)

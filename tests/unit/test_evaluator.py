@@ -904,6 +904,35 @@ class TestSameValidityAs:
         result = evaluate_turtle_conditions(turtle)
         assert result["intentHandlingState"] == "Fulfilled"
 
+    def test_conflicting_targets_terminates(self):
+        """X sameValidityAs B (true) AND C (false) — must not hang; treated as invalid."""
+        turtle = (
+            _IV_PFX
+            + _WINDOW_COND
+            + "<urn:t:window> iv:ivsameValidityAs <urn:t:b> .\n"
+            "<urn:t:window> iv:ivsameValidityAs <urn:t:c> .\n"
+            "<urn:t:b> iv:ivisValid true .\n"
+            "<urn:t:c> iv:ivisValid false .\n"
+        )
+        # Must return (not hang); conflicting → window treated as closed → Degraded.
+        result = evaluate_turtle_conditions(turtle)
+        assert result["intentHandlingState"] == "Degraded"
+
+    def test_conflicting_targets_diamond(self):
+        """Diamond: window → b, window → c; b ← root (true), c ← root (false) via different paths."""
+        turtle = (
+            _IV_PFX
+            + _WINDOW_COND
+            + "<urn:t:window> iv:ivsameValidityAs <urn:t:b> .\n"
+            "<urn:t:window> iv:ivsameValidityAs <urn:t:c> .\n"
+            "<urn:t:b> iv:ivsameValidityAs <urn:t:root> .\n"
+            "<urn:t:c> iv:ivisValid false .\n"
+            "<urn:t:root> iv:ivisValid true .\n"
+        )
+        result = evaluate_turtle_conditions(turtle)
+        # window sees conflict (b→true, c→false) → treated as invalid → Degraded
+        assert result["intentHandlingState"] == "Degraded"
+
 
 class TestValidityOf:
     """iv:ivvalidityOf — passes iff ALL members have iv:ivisValid true."""
@@ -4043,6 +4072,30 @@ class TestExtTypesViaEvaluateTurtleConditions:
         assert result["intentHandlingState"] == "Degraded"
 
 
+# ── size limit (of5) ─────────────────────────────────────────────────────────
+
+class TestEvaluateSizeLimit:
+    def test_oversized_expression_returns_degraded(self, monkeypatch):
+        import src.handler.evaluator as ev
+        monkeypatch.setattr(ev, "_MAX_TURTLE_BYTES", 10)
+        result = evaluate_turtle_conditions("@prefix ex: <urn:ex:> . ex:a a ex:B .")
+        assert result["intentHandlingState"] == "Degraded"
+        assert "size limit" in result["reason"]
+        assert result["conditions"] == []
+
+    def test_within_size_limit_evaluates_normally(self, monkeypatch):
+        import src.handler.evaluator as ev
+        monkeypatch.setattr(ev, "_MAX_TURTLE_BYTES", 512 * 1024)
+        result = evaluate_turtle_conditions(
+            "@prefix quan: <http://tio.models.tmforum.org/tio/v3.6.0/QuantityOntology/> .\n"
+            "@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .\n"
+            "@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .\n"
+            "<urn:c> a quan:quanatLeast ; rdf:first <urn:a> ; rdf:rest [ rdf:first <urn:b> ] .\n"
+            '<urn:a> rdf:value "5"^^xsd:decimal . <urn:b> rdf:value "3"^^xsd:decimal .\n'
+        )
+        assert result["intentHandlingState"] == "Fulfilled"
+
+
 # ── dispatcher ────────────────────────────────────────────────────────────────
 
 
@@ -4107,6 +4160,30 @@ class TestDispatchEvaluation:
         report_data = mock_report_repo.create.call_args[0][1]
         assert report_data["intentHandlingState"] == "Degraded"
         assert report_data["intentHandlingReason"] == "No Turtle expression"
+
+    async def test_dispatch_creates_degraded_report_on_timeout(self, monkeypatch):
+        """evaluate_intent timing out produces a Degraded IntentReport with 'timeout' reason."""
+        import src.handler.dispatcher as disp
+        monkeypatch.setattr(disp, "_EVAL_TIMEOUT", 0.01)
+
+        mock_client = MagicMock(spec=FusekiClient)
+        mock_report_repo = MagicMock()
+        mock_report_repo.create = AsyncMock(return_value={"id": "r1"})
+        mock_hub_repo = MagicMock()
+
+        async def _slow(*_):
+            await asyncio.sleep(10)
+
+        with (
+            patch("src.handler.dispatcher.evaluate_intent", side_effect=_slow),
+            patch("src.handler.dispatcher.write_handler_state", new_callable=AsyncMock),
+        ):
+            await dispatch_evaluation(INTENT_ID, mock_client, mock_report_repo, mock_hub_repo)
+
+        mock_report_repo.create.assert_called_once()
+        report_data = mock_report_repo.create.call_args[0][1]
+        assert report_data["intentHandlingState"] == "Degraded"
+        assert "timeout" in (report_data.get("intentHandlingReason") or "")
 
 
 class TestScheduleEvaluation:

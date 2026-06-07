@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import uuid
 from datetime import datetime, timezone
 
@@ -25,6 +26,7 @@ logger = logging.getLogger(__name__)
 _background_tasks: set[asyncio.Task] = set()
 
 _BASE_HREF = "http://tmforum.org/tmf-api/intentManagement/v5"
+_EVAL_TIMEOUT: float = float(os.getenv("EVAL_TIMEOUT_SECONDS", "30"))
 
 
 async def dispatch_evaluation(
@@ -40,8 +42,27 @@ async def dispatch_evaluation(
     never propagate to callers.
     """
     try:
-        result = await evaluate_intent(intent_id, client)
+        result = await asyncio.wait_for(
+            evaluate_intent(intent_id, client),
+            timeout=_EVAL_TIMEOUT,
+        )
+    except asyncio.TimeoutError:
+        logger.warning(
+            "dispatch_evaluation: evaluation timed out after %ss for intent %s",
+            _EVAL_TIMEOUT,
+            intent_id,
+        )
+        result = {"intentHandlingState": "Degraded", "reason": "evaluation timeout"}
+    except Exception as exc:
+        logger.error(
+            "dispatch_evaluation: unhandled error for intent %s: %s",
+            intent_id,
+            exc,
+            exc_info=True,
+        )
+        return
 
+    try:
         # Write working-memory facts before the IntentReport so the OODA loop
         # always has current state even if the report write subsequently fails.
         await write_handler_state(intent_id, result, client)
@@ -77,7 +98,7 @@ async def dispatch_evaluation(
 
     except Exception as exc:
         logger.error(
-            "dispatch_evaluation: unhandled error for intent %s: %s",
+            "dispatch_evaluation: report/notification error for intent %s: %s",
             intent_id,
             exc,
             exc_info=True,

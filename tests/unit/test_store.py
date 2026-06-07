@@ -7,6 +7,7 @@ Coverage target: ≥80% of src/graph/.
 import pytest
 import respx
 import httpx
+from unittest.mock import patch
 
 from src.graph import namespaces as ns
 from src.graph import nodes
@@ -338,3 +339,81 @@ class TestSchemaInit:
         respx.post(f"{FUSEKI}/$/datasets").mock(return_value=httpx.Response(201))
         async with FusekiClient(FUSEKI, DATASET) as client:
             await initialise_schema(client)  # must not raise
+
+
+# ── Retry behaviour (w83) ─────────────────────────────────────────────────────
+
+class TestRetry:
+    @respx.mock
+    async def test_query_retries_on_503_and_succeeds(self, monkeypatch):
+        monkeypatch.setattr(store, "_BASE_RETRY_DELAY", 0.0)
+        route = respx.post(f"{FUSEKI}/{DATASET}/sparql")
+        route.side_effect = [
+            httpx.Response(503),
+            httpx.Response(200, json=SPARQL_RESULTS),
+        ]
+        async with FusekiClient(FUSEKI, DATASET) as client:
+            result = await client.query("SELECT * WHERE { ?s ?p ?o }")
+        assert result == SPARQL_RESULTS["results"]["bindings"]
+
+    @respx.mock
+    async def test_query_retries_on_connect_error_and_succeeds(self, monkeypatch):
+        monkeypatch.setattr(store, "_BASE_RETRY_DELAY", 0.0)
+        route = respx.post(f"{FUSEKI}/{DATASET}/sparql")
+        route.side_effect = [
+            httpx.ConnectError("refused"),
+            httpx.Response(200, json=SPARQL_RESULTS),
+        ]
+        async with FusekiClient(FUSEKI, DATASET) as client:
+            result = await client.query("SELECT * WHERE { ?s ?p ?o }")
+        assert result == SPARQL_RESULTS["results"]["bindings"]
+
+    @respx.mock
+    async def test_query_raises_after_max_retries_exhausted(self, monkeypatch):
+        monkeypatch.setattr(store, "_BASE_RETRY_DELAY", 0.0)
+        monkeypatch.setattr(store, "_MAX_RETRIES", 1)
+        respx.post(f"{FUSEKI}/{DATASET}/sparql").mock(return_value=httpx.Response(503))
+        async with FusekiClient(FUSEKI, DATASET) as client:
+            with pytest.raises(httpx.HTTPStatusError):
+                await client.query("SELECT * WHERE { ?s ?p ?o }")
+
+    @respx.mock
+    async def test_update_does_not_retry_on_read_error(self, monkeypatch):
+        """Non-idempotent update must not retry ReadError (bytes may have been sent)."""
+        monkeypatch.setattr(store, "_BASE_RETRY_DELAY", 0.0)
+        respx.post(f"{FUSEKI}/{DATASET}/update").mock(
+            side_effect=httpx.ReadError("timeout")
+        )
+        async with FusekiClient(FUSEKI, DATASET) as client:
+            with pytest.raises(httpx.ReadError):
+                await client.update("INSERT DATA { <urn:s> <urn:p> <urn:o> }")
+
+    @respx.mock
+    async def test_update_retries_on_connect_error(self, monkeypatch):
+        """Non-idempotent update retries ConnectError (no bytes sent)."""
+        monkeypatch.setattr(store, "_BASE_RETRY_DELAY", 0.0)
+        route = respx.post(f"{FUSEKI}/{DATASET}/update")
+        route.side_effect = [
+            httpx.ConnectError("refused"),
+            httpx.Response(200),
+        ]
+        async with FusekiClient(FUSEKI, DATASET) as client:
+            await client.update("INSERT DATA { <urn:s> <urn:p> <urn:o> }")
+
+    @respx.mock
+    async def test_gsp_put_retries_on_503(self, monkeypatch):
+        monkeypatch.setattr(store, "_BASE_RETRY_DELAY", 0.0)
+        route = respx.put(f"{FUSEKI}/{DATASET}/data")
+        route.side_effect = [
+            httpx.Response(503),
+            httpx.Response(201),
+        ]
+        async with FusekiClient(FUSEKI, DATASET) as client:
+            await client.gsp_put("http://example.org/graph", "@prefix ex: <urn:ex:> .")
+
+    async def test_timeout_uses_split_connect_read(self):
+        """Client is constructed with separate connect and read timeouts."""
+        async with FusekiClient(FUSEKI, DATASET) as client:
+            t = client._http.timeout
+            assert t.connect == store._CONNECT_TIMEOUT
+            assert t.read == store._READ_TIMEOUT

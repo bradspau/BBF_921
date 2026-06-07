@@ -488,3 +488,60 @@ class TestRootFinding:
         assert result["intentHandlingState"] == "Fulfilled"
         # only the quantity condition is in the list
         assert len(result["conditions"]) == 1
+
+    def test_bare_log_match_fulfilled(self):
+        """Bare top-level log:match with no enclosing combinator is evaluated as root."""
+        t = (
+            "ex:iface ex:state ex:Up .\n"
+            "ex:cond log:match ( ex:iface ex:state ex:Up ) .\n"
+        )
+        assert _run(t)["intentHandlingState"] == "Fulfilled"
+
+    def test_bare_log_match_degraded(self):
+        """Bare top-level log:match fails when triple is absent."""
+        t = "ex:cond log:match ( ex:iface ex:state ex:Up ) .\n"
+        result = _run(t)
+        assert result["intentHandlingState"] == "Degraded"
+        assert result["conditions"][0]["type"] == "logMatch"
+        assert result["conditions"][0]["passed"] is False
+
+    def test_bare_log_match_all_fulfilled(self):
+        t = (
+            "ex:m1 a rdfs:Resource . ex:m1 ex:state ex:Up .\n"
+            "ex:container rdfs:member ex:m1 .\n"
+            "ex:cond log:matchAll ( ex:container ex:state ex:Up ) .\n"
+        )
+        assert _run(t)["intentHandlingState"] == "Fulfilled"
+
+    def test_bare_log_match_any_fulfilled(self):
+        t = (
+            "ex:m1 a rdfs:Resource . ex:m1 ex:state ex:Up .\n"
+            "ex:container rdfs:member ex:m1 .\n"
+            "ex:cond log:matchAny ( ex:container ex:state ex:Up ) .\n"
+        )
+        assert _run(t)["intentHandlingState"] == "Fulfilled"
+
+    def test_bare_log_match_none_fulfilled(self):
+        t = (
+            "ex:m1 a rdfs:Resource .\n"
+            "ex:container rdfs:member ex:m1 .\n"
+            "ex:cond log:matchNone ( ex:container ex:state ex:Up ) .\n"
+        )
+        assert _run(t)["intentHandlingState"] == "Fulfilled"
+
+    def test_bare_log_match_one_fulfilled(self):
+        t = (
+            "ex:m1 a rdfs:Resource . ex:m1 ex:state ex:Up .\n"
+            "ex:m2 a rdfs:Resource .\n"
+            "ex:container rdfs:member ex:m1 . ex:container rdfs:member ex:m2 .\n"
+            "ex:cond log:matchOne ( ex:container ex:state ex:Up ) .\n"
+        )
+        assert _run(t)["intentHandlingState"] == "Fulfilled"
+
+    def test_bare_log_match_statement_fulfilled(self):
+        t = (
+            "ex:s ex:p ex:o .\n"
+            "ex:stmt a rdf:Statement ; rdf:subject ex:s ; rdf:predicate ex:p ; rdf:object ex:o .\n"
+            "ex:cond log:matchStatement ( ex:stmt ) .\n"
+        )
+        assert _run(t)["intentHandlingState"] == "Fulfilled"
