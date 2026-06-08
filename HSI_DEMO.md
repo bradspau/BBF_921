@@ -400,25 +400,31 @@ curl -s -X POST "http://localhost:3030/tmf921/sparql" \
 
 **Query the handlerState conditions:**
 
+Two-argument conditions (`quanatLeast`, `quansmaller`, etc.) use `imo:boundValue`.
+Range conditions (`quaninRange`) use `imo:lowerBound` + `imo:upperBound` instead.
+The query below handles both — null columns simply won't appear in the binding:
+
 ```bash
 curl -s -X POST "http://localhost:3030/tmf921/sparql" \
   -H "Content-Type: application/sparql-query" \
   -d "
 PREFIX imo: <http://tio.models.tmforum.org/tio/v3.6.0/IntentManagementOntology/>
 
-SELECT ?type ?observed ?bound ?passed
+SELECT ?type ?observed ?bound ?lower ?upper ?passed
 WHERE {
   GRAPH <http://tmforum.org/api/v5/intents/$INTENT_ID/handlerState> {
     ?intent imo:hasConditionResult ?c .
     ?c a ?type ;
        imo:conditionPassed ?passed .
     OPTIONAL { ?c imo:observedValue ?observed }
-    OPTIONAL { ?c imo:boundValue ?bound }
+    OPTIONAL { ?c imo:boundValue    ?bound }
+    OPTIONAL { ?c imo:lowerBound    ?lower }
+    OPTIONAL { ?c imo:upperBound    ?upper }
   }
 }" | python3 -m json.tool
 ```
 
-Expected output after Step 4 (Fulfilled state):
+Expected output after Step 4 (Fulfilled state) — two-argument conditions:
 
 ```json
 {
@@ -436,6 +442,19 @@ Expected output after Step 4 (Fulfilled state):
 }
 ```
 
+For a `quaninRange` condition the binding would instead show `lower` and `upper`
+with no `bound`:
+
+```json
+{
+  "type":     { "value": "...quaninRange" },
+  "observed": { "value": "12" },
+  "lower":    { "value": "5" },
+  "upper":    { "value": "25" },
+  "passed":   { "value": "true" }
+}
+```
+
 ---
 
 ### 8d — Query via the Fuseki UI
@@ -448,14 +467,16 @@ Run this shell command to generate a ready-to-paste query with your UUID substit
 cat <<EOF
 PREFIX imo: <http://tio.models.tmforum.org/tio/v3.6.0/IntentManagementOntology/>
 
-SELECT ?type ?observed ?bound ?passed
+SELECT ?type ?observed ?bound ?lower ?upper ?passed
 WHERE {
   GRAPH <http://tmforum.org/api/v5/intents/$INTENT_ID/handlerState> {
     ?intent imo:hasConditionResult ?c .
     ?c a ?type ;
        imo:conditionPassed ?passed .
     OPTIONAL { ?c imo:observedValue ?observed }
-    OPTIONAL { ?c imo:boundValue ?bound }
+    OPTIONAL { ?c imo:boundValue    ?bound }
+    OPTIONAL { ?c imo:lowerBound    ?lower }
+    OPTIONAL { ?c imo:upperBound    ?upper }
   }
 }
 EOF
