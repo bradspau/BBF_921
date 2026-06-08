@@ -11,6 +11,9 @@
 ║   GET/POST           GET/DELETE            GET/POST             POST/DELETE  ║
 ║   PATCH/DELETE       (read-only)           PATCH/DELETE                      ║
 ║                                                                              ║
+║   observation.py                                                             ║
+║   POST /intent/{id}/observation  (writes met:Observation, triggers eval)    ║
+║                                                                              ║
 ║                     error_handlers.py   fields_filter.py                    ║
 ╚══════════════════════════════════════════════════════════════════════════════╝
                 │                                      │
@@ -33,27 +36,61 @@
                 │  asyncio.create_task                 │  (SPARQL)
                 │  (fire-and-forget)                   │
                 ▼                                      │
-╔═══════════════════════════════╗                      │
-║     INTENT HANDLER            ║                      │
-║     (src/handler/)            ║                      │
-║                               ║                      │
-║  dispatcher.py                ║                      │
-║  · schedule_evaluation()      ║                      │
-║  · dispatch_evaluation()      ║                      │
-║        │                      ║                      │
-║        ▼                      ║                      │
-║  evaluator.py                 ║                      │
-║  · query expression from      ║                      │
-║    intent named graph         ║                      │
-║  · load Turtle into           ║                      │
-║    eval graph (temp)          ║                      │
-║  · query intentHandlingState  ║                      │
-║  · DROP eval graph            ║                      ║
-╚═══════════════════════════════╝                      │
-                │                                      │
-       write IntentReport                              │
-                │                                      │
-                ▼                                      ▼
+╔══════════════════════════════════════════════════════╗
+║     INTENT HANDLER  (src/handler/)                   ║
+║                                                      ║
+║  dispatcher.py                                       ║
+║  · dispatch_evaluation()  ── background asyncio task ║
+║  · _try_probe_transition()  Flow 1: ProbeIntent      ║
+║  │   evaluates ProbeIntent expression                ║
+║  │   PATCH lifecycleStatus → ACTIVE or TERMINATED   ║
+║  · _try_auto_activate()     Flow 2: Judge/Preference ║
+║  │   re-evaluation passes on DEGRADED intent         ║
+║  │   PATCH lifecycleStatus DEGRADED → ACTIVE         ║
+║  · _try_best_propose()      Flow 3: Best/Propose     ║
+║  │   Degraded TurtleExpression intent                ║
+║  │   substitutes best-effort bounds via limits.py    ║
+║  │   PATCH expressionValue + fires                   ║
+║  │   intentAttributeValueChangeEvent                 ║
+║  │                                                   ║
+║  ▼                                                   ║
+║  evaluator.py                                        ║
+║  · query expressionValue from intent named graph     ║
+║  · merge with observation Turtle (in Python memory)  ║
+║  · run TIO expression tree evaluation via RDFLib     ║
+║  · pre-processing pipeline:                          ║
+║      _resolve_metric_refs                            ║
+║      _compute_math_functions                         ║
+║      _compute_set_constructors                       ║
+║      _resolve_validity_chains                        ║
+║      _derive_guarantee_states                        ║
+║      _derive_ext_types                               ║
+║  · returns {intentHandlingState, reason, conditions} ║
+║  │                                                   ║
+║  ▼                                                   ║
+║  state_writer.py                                     ║
+║  · serialises per-condition facts to Turtle          ║
+║  · GSP PUT → intents/{id}/handlerState named graph   ║
+║  │   (OODA working memory — atomically replaced)     ║
+║  │                                                   ║
+║  observation_store.py                                ║
+║  · appends met:Observation to observation graph      ║
+║  · prunes to MAX_OBS_PER_METRIC per metric           ║
+║  · GSP PUT → intents/{id}/observations               ║
+║  │                                                   ║
+║  limits.py                                           ║
+║  · loads HANDLER_LIMITS_JSON at startup              ║
+║  · apply_best_effort_bounds() — parses Turtle,       ║
+║    walks failed quan:* nodes, substitutes            ║
+║    observed value (primary) or operator limit        ║
+║    (fallback) into bound rdf:value literals          ║
+╚══════════════════════════════════════════════════════╝
+                │                   │ Flows 1/2/3:
+                │                   │ PATCH lifecycleStatus
+       write    │                   │ PATCH expressionValue
+    IntentReport│                   │ write_state_change()
+                │                   │
+                ▼                   ▼
 ╔══════════════════════════════════════════════════════════════════════════════╗
 ║                       REPOSITORY LAYER  (src/graph/repositories/)            ║
 ║                                                                              ║
@@ -82,15 +119,25 @@
                                      │
                                      ▼
 ╔══════════════════════════════════════════════════════════════════════════════╗
-║                    APACHE JENA FUSEKI  (TDB2)                                ║
+║                    APACHE JENA FUSEKI  (TDB2)  dataset: tmf921               ║
 ║                                                                              ║
-║   intents/{id}              ── one graph per Intent / ProbeIntent            ║
-║   reports/{id}              ── one graph per IntentReport                    ║
-║   intentSpecifications/{id} ── one graph per IntentSpecification             ║
-║   hubs                      ── all Hub subscription triples                  ║
-║   audit/{id}                ── immutable StateChange records                 ║
-║   eval/{id}                 ── ephemeral; created and dropped per evaluation ║
-║   ontology                  ── read-only TIO ontology TTL files              ║
+║  Named graph URI (base: http://tmforum.org/api/v5)   Contents               ║
+║  ─────────────────────────────────────────────────   ─────────────────────  ║
+║  intents/{id}                ── Intent / ProbeIntent resource + expression   ║
+║  intents/{id}/handlerState   ── OODA working memory; per-condition facts     ║
+║                                 (imo:observedValue, imo:boundValue,          ║
+║                                  imo:lowerBound, imo:upperBound,             ║
+║                                  imo:conditionPassed); replaced each cycle   ║
+║  intents/{id}/observations   ── met:Observation records; bounded to         ║
+║                                 MAX_OBS_PER_METRIC per metric URI            ║
+║  reports/{id}                ── IntentReport from each evaluation cycle      ║
+║  intentSpecifications/{id}   ── IntentSpecification resource                 ║
+║  hubs                        ── Hub subscription triples                     ║
+║  audit/{id}                  ── immutable StateChange records                ║
+║  ontology                    ── read-only TIO ontology TTL files             ║
+║                                                                              ║
+║  NOTE: evaluation runs entirely in Python (RDFLib) — the tmf921-eval        ║
+║  Fuseki dataset is not used at runtime.                                      ║
 ╚══════════════════════════════════════════════════════════════════════════════╝
 
 
