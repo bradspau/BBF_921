@@ -13,3 +13,16 @@ wheels/
 .dolt/
 *.db
 .beads-credential-key
+
+# Test / coverage artifacts
+.coverage
+.pytest_cache/
+
+# IDE
+.vscode/
+
+# macOS metadata
+.DS_Store
+
+# Session working notes (not part of the deliverable)
+session_prompts/
