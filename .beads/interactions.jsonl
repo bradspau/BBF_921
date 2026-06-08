@@ -60,3 +60,5 @@
 {"id":"int-c3b19345","kind":"field_change","created_at":"2026-06-07T08:08:07.103660663Z","actor":"Brad","issue_id":"BBF_921-w83","extra":{"field":"status","new_value":"closed","old_value":"in_progress","reason":"Closed"}}
 {"id":"int-a17fb4e4","kind":"field_change","created_at":"2026-06-07T08:19:18.576114625Z","actor":"Brad","issue_id":"BBF_921-71s","extra":{"field":"status","new_value":"closed","old_value":"in_progress","reason":"Closed"}}
 {"id":"int-f3eede87","kind":"field_change","created_at":"2026-06-07T08:19:18.78608619Z","actor":"Brad","issue_id":"BBF_921-gct","extra":{"field":"status","new_value":"closed","old_value":"in_progress","reason":"Closed"}}
+{"id":"int-617eade5","kind":"field_change","created_at":"2026-06-08T00:00:56.22538224Z","actor":"Brad","issue_id":"BBF_921-6a4","extra":{"field":"status","new_value":"closed","old_value":"in_progress","reason":"Closed"}}
+{"id":"int-ed8191a8","kind":"field_change","created_at":"2026-06-08T00:00:56.374425798Z","actor":"Brad","issue_id":"BBF_921-mxq","extra":{"field":"status","new_value":"closed","old_value":"in_progress","reason":"Closed"}}
