@@ -7,8 +7,9 @@ TMF = Namespace("http://tmforum.org/api/v5/")
 DCTERMS = Namespace("http://purl.org/dc/terms/")
 
 # Named graph constants (static, not per-resource)
-ONTOLOGY_GRAPH = URIRef("http://tmforum.org/api/v5/ontology")
-HUBS_GRAPH = URIRef("http://tmforum.org/api/v5/hubs")
+ONTOLOGY_GRAPH  = URIRef("http://tmforum.org/api/v5/ontology")
+HUBS_GRAPH      = URIRef("http://tmforum.org/api/v5/hubs")
+RESOURCES_GRAPH = URIRef("http://tmforum.org/api/v5/resources")
 
 # RDF class URIs
 CLASS_INTENT = TMF.Intent

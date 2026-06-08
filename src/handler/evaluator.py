@@ -1735,6 +1735,22 @@ async def evaluate_intent(intent_id: str, client: FusekiClient) -> dict:
         }
 
     obs_turtle = await get_observations_turtle(intent_id, client)
-    combined = expr_value + "\n" + obs_turtle if obs_turtle else expr_value
+
+    # Merge resource inventory so set:resourcesOfType / set:resourcesWithPropertyObject
+    # can resolve against domain resource data loaded at startup.
+    resources_turtle: str | None = None
+    try:
+        from src.graph.namespaces import RESOURCES_GRAPH
+        resources_turtle = await client.gsp_get(str(RESOURCES_GRAPH))
+    except Exception:
+        pass  # resources graph absent or empty — evaluation continues without it
+
+    parts = [expr_value]
+    if obs_turtle:
+        parts.append(obs_turtle)
+    if resources_turtle:
+        parts.append(resources_turtle)
+    combined = "\n".join(parts)
+
     loop = asyncio.get_running_loop()
     return await loop.run_in_executor(None, evaluate_turtle_conditions, combined)

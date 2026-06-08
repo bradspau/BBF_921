@@ -1,4 +1,6 @@
 services:
+
+  # ── Shared Fuseki instance (always starts) ───────────────────────────────────
   fuseki:
     build:
       context: .
@@ -16,13 +18,42 @@ services:
       retries: 10
       start_period: 30s
 
-  app:
+  # ── Access Domain ─────────────────────────────────────────────────────────────
+  # Manages UNI/ONT/OLT resources and evaluates HSI intents against them.
+  # Loads PON resource inventory from BBF_access/ at startup.
+  #
+  # Start:  docker compose --profile access up --build
+  # Seed:   python seed_data/seed_access.py --base-url http://localhost:8001
+  access-api:
+    profiles: [access]
+    build: .
+    ports:
+      - "8001:8000"
+    environment:
+      FUSEKI_BASE_URL: http://fuseki:3030
+      FUSEKI_DATASET: tmf921-access
+      RESOURCE_DATA_DIR: BBF_access
+      LOG_LEVEL: info
+    volumes:
+      - ./BBF_access:/app/BBF_access:ro
+    depends_on:
+      fuseki:
+        condition: service_healthy
+
+  # ── Aggregation Domain ────────────────────────────────────────────────────────
+  # Manages the aggregation network; acts as intent owner posting ProbeIntents
+  # and Intents to the access domain via the F-interface.
+  #
+  # Start:  docker compose --profile aggregation up --build
+  # Seed:   python seed_data/seed_aggregation.py --base-url http://localhost:8000
+  agg-api:
+    profiles: [aggregation]
     build: .
     ports:
       - "8000:8000"
     environment:
       FUSEKI_BASE_URL: http://fuseki:3030
-      FUSEKI_DATASET: tmf921
+      FUSEKI_DATASET: tmf921-agg
       LOG_LEVEL: info
     depends_on:
       fuseki:
