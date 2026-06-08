@@ -26,9 +26,11 @@
 # ║    CTAG-N-002 in use  — subscriber BBF_SUB_10001                           ║
 # ║    All others free                                                          ║
 # ║                                                                             ║
-# ║  NOTE: hsionlyintent_v0.5.ttl set constructors reference bbf:UNIInterface  ║
-# ║  and bbf:inUse.  When that intent is updated to the pon: namespace, change  ║
-# ║  set:resourcesOfType to pon:UNIPort and bbf:inUse to pon:inUse.            ║
+# ║  ALIGNED: hsionlyintent_v0.5.ttl uses pon: namespace throughout —           ║
+# ║  set:resourcesOfType pon:UNIPort / pon:CTAGAllocation, pon:inUse,           ║
+# ║  pon:operationalState, and pon:provisioningState are consistent with this   ║
+# ║  data.  Handler write-back sets pon:inUse true/false on both the selected   ║
+# ║  UNI and CTAG and records pon:assignedToService <intent-uuid>.              ║
 # ╚══════════════════════════════════════════════════════════════════════════════╝
 
 

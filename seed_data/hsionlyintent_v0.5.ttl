@@ -34,6 +34,7 @@ bbf:HSIIntent  a icm:Intent ;
 bbf:HSICompositeExpectation  a icm:Expectation ;
     log:allOf ( bbf:HSIServiceProvisioningExpectation
                 bbf:UNIOperationalExpectation
+                bbf:HSICTAGProvisioningExpectation
                 bbf:HSIPerformanceExpectation
                 bbf:HSIMonitoringExpectation ) .
 
@@ -56,6 +57,20 @@ bbf:AvailableUNIInterfaces  a icm:Target ;
     set:resourcesWithPropertyObject ( pon:inUse             false ) ;
     set:resourcesWithPropertyObject ( pon:operationalState  pon:Up ) ;
     set:resourcesWithPropertyObject ( pon:provisioningState pon:Ready ) .
+
+bbf:SelectedCTAGAllocation  a icm:Target .
+
+bbf:AvailableCTAGAllocations  a icm:Target ;
+    set:resourcesOfType              pon:CTAGAllocation ;
+    set:resourcesWithPropertyObject ( pon:inUse  false ) .
+
+############################################################
+# CTAG provisioning expectation
+############################################################
+bbf:HSICTAGProvisioningExpectation  a icm:DeliveryExpectation ;
+    icm:target      bbf:SelectedCTAGAllocation ;
+    icm:deliveryType  pon:HSIService ;
+    icm:chooseFrom  bbf:AvailableCTAGAllocations .
 
 ############################################################
 # Operational expectation
