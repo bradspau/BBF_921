@@ -24,6 +24,7 @@ wheels/
 
 # macOS metadata
 .DS_Store
+**/.DS_Store
 
 # Session working notes (not part of the deliverable)
 session_prompts/
