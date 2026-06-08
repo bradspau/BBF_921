@@ -18,6 +18,7 @@ from src.graph.repositories.intent_repository import IntentRepository
 from src.graph.repositories.intent_report_repository import IntentReportRepository
 from src.graph.store import FusekiClient
 from src.handler.evaluator import evaluate_intent
+from src.handler.limits import apply_best_effort_bounds
 from src.handler.state_writer import write_handler_state
 from src.services.notification_service import EventType, NotificationService
 
@@ -72,6 +73,100 @@ async def _try_auto_activate(
             "dispatch_evaluation: auto-activated intent %s (DEGRADED → ACTIVE after Fulfilled eval)",
             intent_id,
         )
+
+
+async def _try_probe_transition(
+    intent_id: str,
+    result: dict,
+    intent_repo: IntentRepository,
+    hub_repo: HubRepository,
+) -> None:
+    """
+    Flow 1 — ProbeIntent: auto-transition ACKNOWLEDGED→ACTIVE (Fulfilled eval)
+    or ACKNOWLEDGED→TERMINATED (Degraded eval).
+
+    The owner created the ProbeIntent to ask "can you satisfy these terms?"
+    The handler answers by transitioning to ACTIVE (yes) or TERMINATED (no).
+    """
+    intent = await intent_repo.get_by_id(intent_id)
+    if intent is None or intent.get("@type") != "ProbeIntent":
+        return
+    if intent.get("lifecycleStatus") != "ACKNOWLEDGED":
+        return
+    target = "ACTIVE" if result.get("intentHandlingState") == "Fulfilled" else "TERMINATED"
+    now = datetime.now(timezone.utc).isoformat()
+    updated = await intent_repo.update(
+        intent_id,
+        {"lifecycleStatus": target, "statusChangeDate": now},
+        modified_at=now,
+    )
+    if updated is None:
+        return
+    change_id = str(uuid.uuid4())
+    await intent_repo.write_state_change(
+        intent_id=intent_id,
+        change_id=change_id,
+        from_status="ACKNOWLEDGED",
+        to_status=target,
+        timestamp=now,
+    )
+    NotificationService(hub_repo).schedule(EventType.INTENT_STATUS_CHANGE, updated)
+    logger.info(
+        "dispatch_evaluation: probe intent %s auto-transitioned ACKNOWLEDGED → %s",
+        intent_id,
+        target,
+    )
+
+
+async def _try_best_propose(
+    intent_id: str,
+    result: dict,
+    intent_repo: IntentRepository,
+    hub_repo: HubRepository,
+) -> None:
+    """
+    Flow 3 — Best/Propose: when a normal Intent evaluates as Degraded, substitute
+    best-effort bounds in the expressionValue and PATCH the intent.
+
+    Only applies to TurtleExpression intents — JsonLd expressions are opaque and
+    cannot be programmatically mutated. Fires INTENT_ATTRIBUTE_VALUE_CHANGE so
+    the owner knows a proposal is waiting for their approval (PATCH to ACTIVE).
+    """
+    intent = await intent_repo.get_by_id(intent_id)
+    if intent is None or intent.get("@type") != "Intent":
+        return
+    if intent.get("lifecycleStatus") not in ("ACKNOWLEDGED", "ACTIVE"):
+        return
+
+    expr = intent.get("expression") or {}
+    if expr.get("@type") != "TurtleExpression":
+        return
+
+    turtle = expr.get("expressionValue")
+    if not turtle:
+        return
+
+    conditions = result.get("conditions", [])
+    new_turtle, changed = apply_best_effort_bounds(turtle, conditions)
+    if not changed or new_turtle is None:
+        logger.debug(
+            "dispatch_evaluation: no best-effort substitution possible for intent %s",
+            intent_id,
+        )
+        return
+
+    now = datetime.now(timezone.utc).isoformat()
+    updated = await intent_repo.update(
+        intent_id,
+        {"expression": {"@type": "TurtleExpression", "expressionValue": new_turtle}},
+        modified_at=now,
+    )
+    if updated is None:
+        return
+    NotificationService(hub_repo).schedule(EventType.INTENT_ATTRIBUTE_VALUE_CHANGE, updated)
+    logger.info(
+        "dispatch_evaluation: best-propose PATCH applied for intent %s", intent_id
+    )
 
 
 async def dispatch_evaluation(
@@ -144,8 +239,16 @@ async def dispatch_evaluation(
             {**report_data, "intentId": intent_id},
         )
 
-        if result.get("intentHandlingState") == "Fulfilled" and intent_repo is not None:
-            await _try_auto_activate(intent_id, intent_repo, hub_repo)
+        if intent_repo is not None:
+            state = result.get("intentHandlingState")
+            # Flow 1: ProbeIntent — auto-accept or auto-reject based on eval result.
+            await _try_probe_transition(intent_id, result, intent_repo, hub_repo)
+            if state == "Fulfilled":
+                # Flow 2: normal Intent DEGRADED → ACTIVE when re-evaluation passes.
+                await _try_auto_activate(intent_id, intent_repo, hub_repo)
+            elif state == "Degraded":
+                # Flow 3: normal Intent — propose best-effort bounds to owner.
+                await _try_best_propose(intent_id, result, intent_repo, hub_repo)
 
     except Exception as exc:
         logger.error(
