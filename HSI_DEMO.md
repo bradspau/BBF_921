@@ -331,23 +331,122 @@ graph as before, so the result will match the most recently submitted values.
 
 ## Step 8 — Inspect the handlerState graph directly (Fuseki)
 
-The `handlerState` graph lives in the **`tmf921`** dataset (the same one the API uses).
-`tmf921-eval` is a separate in-memory dataset — it does not hold handler state.
+### Understanding Fuseki datasets vs named graphs
 
-Fetch the raw Turtle from the shell (`$INTENT_ID` is already set from Step 1):
+The Fuseki UI sidebar shows two **datasets**: `tmf921` and `tmf921-eval`.
+These are top-level containers — not the graphs themselves.
 
-```bash
-curl -s "http://localhost:3030/tmf921/data?graph=http://tmforum.org/api/v5/intents/$INTENT_ID/handlerState"
+Every intent, report, observation set, and handlerState is a separate **named graph**
+stored *inside* the `tmf921` dataset, identified by a URI. You cannot see them listed
+in the Fuseki sidebar; you discover them by querying the dataset.
+
+| What you see in the sidebar | What it contains |
+|---|---|
+| `tmf921` | All API named graphs — intents, reports, observations, handlerState, hubs |
+| `tmf921-eval` | Separate in-memory dataset — not used at runtime; ignore it |
+
+Named graph URIs follow this pattern (base: `http://tmforum.org/api/v5`):
+
+| Named graph | Contents |
+|---|---|
+| `.../intents/{uuid}` | Intent resource + expression Turtle |
+| `.../intents/{uuid}/handlerState` | Per-condition evaluation facts (OODA working memory) |
+| `.../intents/{uuid}/observations` | Metric observation records |
+| `.../reports/{uuid}` | IntentReport from each evaluation cycle |
+| `.../hubs` | Hub subscription records |
+
+---
+
+### 8a — Discover all named graphs in the dataset
+
+Run this in the Fuseki UI (`http://localhost:3030` → select `tmf921` → Query tab),
+or from the shell (see 8c below):
+
+```sparql
+SELECT DISTINCT ?g WHERE { GRAPH ?g { } }
 ```
 
-Or via SPARQL — open the Fuseki UI at `http://localhost:3030`, select the **`tmf921`** dataset,
-choose the **Query** tab. Run this command first to print a ready-to-paste query with your UUID
-already substituted:
+This lists every named graph that currently exists in the `tmf921` dataset.
+
+---
+
+### 8b — Fetch raw Turtle via Graph Store Protocol (shell)
+
+The simplest way to dump a named graph's full contents:
+
+```bash
+curl -s \
+  "http://localhost:3030/tmf921/data?graph=http://tmforum.org/api/v5/intents/$INTENT_ID/handlerState"
+```
+
+Replace `handlerState` with `observations` or omit the suffix entirely to fetch the
+intent's own named graph.
+
+---
+
+### 8c — Query via SPARQL POST (shell)
+
+Run SPARQL directly from the terminal — no browser needed. The SPARQL endpoint for the
+`tmf921` dataset is `http://localhost:3030/tmf921/sparql`.
+
+**List all named graphs:**
+
+```bash
+curl -s -X POST "http://localhost:3030/tmf921/sparql" \
+  -H "Content-Type: application/sparql-query" \
+  -d "SELECT DISTINCT ?g WHERE { GRAPH ?g { } }" \
+  | python3 -m json.tool
+```
+
+**Query the handlerState conditions:**
+
+```bash
+curl -s -X POST "http://localhost:3030/tmf921/sparql" \
+  -H "Content-Type: application/sparql-query" \
+  -d "
+PREFIX imo: <http://tio.models.tmforum.org/tio/v3.6.0/IntentManagementOntology/>
+
+SELECT ?type ?observed ?bound ?passed
+WHERE {
+  GRAPH <http://tmforum.org/api/v5/intents/$INTENT_ID/handlerState> {
+    ?intent imo:hasConditionResult ?c .
+    ?c a ?type ;
+       imo:conditionPassed ?passed .
+    OPTIONAL { ?c imo:observedValue ?observed }
+    OPTIONAL { ?c imo:boundValue ?bound }
+  }
+}" | python3 -m json.tool
+```
+
+Expected output after Step 4 (Fulfilled state):
+
+```json
+{
+  "results": {
+    "bindings": [
+      {
+        "type":     { "value": "...quanatLeast" },
+        "observed": { "value": "150" },
+        "bound":    { "value": "100" },
+        "passed":   { "value": "true" }
+      },
+      ...
+    ]
+  }
+}
+```
+
+---
+
+### 8d — Query via the Fuseki UI
+
+Open `http://localhost:3030`, select the **`tmf921`** dataset, choose the **Query** tab.
+
+Run this shell command to generate a ready-to-paste query with your UUID substituted:
 
 ```bash
 cat <<EOF
 PREFIX imo: <http://tio.models.tmforum.org/tio/v3.6.0/IntentManagementOntology/>
-PREFIX quan: <http://tio.models.tmforum.org/tio/v3.6.0/QuantityOntology/>
 
 SELECT ?type ?observed ?bound ?passed
 WHERE {
@@ -362,13 +461,8 @@ WHERE {
 EOF
 ```
 
-Copy the output and paste it into the Fuseki Query tab.
-
-To list every named graph currently in the `tmf921` dataset:
-
-```sparql
-SELECT DISTINCT ?g WHERE { GRAPH ?g { } }
-```
+Copy the output (with the real UUID inline) and paste it into the Fuseki Query tab,
+then click **Run query**.
 
 ---
 
