@@ -25,6 +25,21 @@ graph, then walks the TIO expression tree to produce `Fulfilled` or `Degraded`.
 
 ---
 
+## Startup modes
+
+This demo can be run in three modes depending on what you want to exercise.
+Steps 1–10 use the **default single-domain mode**. The dual-domain F-interface
+demo (Step 11) requires the access and aggregation profiles.
+
+| Mode | Command | Port | Dataset | Use for |
+|---|---|---|---|---|
+| **Default** | `docker compose up` | 8000 | `tmf921` | Steps 1–10 — single domain walkthrough |
+| **Access domain** | `docker compose --profile access up` | 8001 | `tmf921-access` | PON resource allocation, HSI intent against real UNI inventory |
+| **Aggregation domain** | `docker compose --profile aggregation up` | 8000 | `tmf921-agg` | F-interface intent owner |
+| **Both domains** | `docker compose --profile access --profile aggregation up` | 8000 + 8001 | both | Step 11 — full F-interface ProbeIntent demo |
+
+---
+
 ## Start with a clean Fuseki store
 
 Fuseki uses TDB2 persistent storage. If you have previously run the seeder or an
@@ -35,7 +50,15 @@ the store. Always wipe and restart before running this demo to avoid seeing old 
 
 ```bash
 sudo docker compose down -v   # -v removes named volumes → clean Fuseki store
+
+# Default single-domain (Steps 1–10)
 sudo docker compose up --build
+
+# Access domain only
+sudo docker compose --profile access up --build
+
+# Both domains (Step 11)
+sudo docker compose --profile access --profile aggregation up --build
 ```
 
 ### Dev server (wipe Fuseki TDB2 manually)
@@ -55,6 +78,7 @@ sudo rm -rf /tmp/fuseki-data   # adjust to your fuseki --loc path
 ### Option A — Docker (recommended)
 
 ```bash
+# Default single-domain mode (Steps 1–10)
 sudo docker compose up --build
 ```
 
@@ -62,6 +86,8 @@ This starts Fuseki (port 3030) and the API (port 8000) together. Wait for:
 ```
 INFO:     Application startup complete.
 ```
+
+For the dual-domain demo see Step 11.
 
 ### Option B — Local dev server
 
@@ -71,14 +97,19 @@ sudo docker run -p 3030:3030 \
   -v "$(pwd)/fuseki-config.ttl:/fuseki/config.ttl" \
   --name fuseki stain/jena-fuseki:5.2.0 --config /fuseki/config.ttl
 
-# Terminal 2 — API
+# Terminal 2 — Default API
 .venv/bin/uvicorn src.main:app --reload
+
+# Terminal 2 (alternative) — Access domain with PON resource inventory
+FUSEKI_DATASET=tmf921-access RESOURCE_DATA_DIR=BBF_access \
+    .venv/bin/uvicorn src.main:app --port 8001 --reload
 ```
 
 ### Verify health
 
 ```bash
-curl http://localhost:8000/health
+curl http://localhost:8000/health       # default / aggregation domain
+curl http://localhost:8001/health       # access domain
 ```
 
 Expected:
@@ -502,28 +533,42 @@ then click **Run query**.
 
 ---
 
-## Using the seed data instead
+## Using the seed scripts
 
-If you prefer the full BBF intent from `seed_data/hsionlyintent_v0.5.ttl`, seed it:
+### Default domain
 
-```bash
-.venv/bin/python seed_data/seed_intents.py
-```
-
-The seeder creates five intents including `BBF HSI Service Intent v0.5`. Find its ID:
+Seeds five sample intents including the BBF HSI intent:
 
 ```bash
-curl -s "http://localhost:8000/tmf-api/intentManagement/v5/intent?name=BBF+HSI" \
-  | python3 -m json.tool
+python seed_data/seed_intents.py
 ```
 
-Then submit observations using the same metric URIs as above. The structural conditions
-(`UNIUpCondition`, `UNIReadyCondition`, `HSIServiceProvisioningExpectation`) use
-`log:match` and `icm:DeliveryExpectation` respectively; they depend on triples already
-present in the expression Turtle. The seed TTL as shipped does **not** assert the
-concrete state triples (`bbf:SelectedUNIInterface bbf:operationalState bbf:OperationalUp`),
-so those conditions will be `Degraded` until the expression is patched to include them
-or until the intent handler receives external notification of provisioning completion.
+### Access domain seed
+
+Seeds the HSI intent to the access domain. The access domain must be running with
+`RESOURCE_DATA_DIR=BBF_access` (i.e. started with `--profile access`) so the PON
+resource inventory is already loaded before the intent is evaluated:
+
+```bash
+python seed_data/seed_access.py --base-url http://localhost:8001
+```
+
+This posts the intent from `seed_data/hsionlyintent_v0.5.ttl`. The set constructors
+(`set:resourcesOfType pon:UNIPort`, `set:resourcesWithPropertyObject`) will resolve
+against the loaded UNI/ONT/OLT inventory. Submit observations using the metric URIs
+in Step 3 (substituting port **8001**) to drive the performance conditions.
+
+### F-interface demo seed
+
+Runs the full aggregation → access ProbeIntent flow automatically:
+
+```bash
+python seed_data/seed_aggregation.py \
+    --agg-url  http://localhost:8000 \
+    --access-url http://localhost:8001
+```
+
+See Step 11 for a step-by-step breakdown of what this script does.
 
 ---
 
@@ -740,6 +785,124 @@ evaluation cycle will confirm the bound is now achievable and produce a `Fulfill
 
 ---
 
+---
+
+## Step 11 — Dual-domain F-interface demo
+
+This step requires **both** domains running simultaneously.
+
+```bash
+# Terminal 1 — start both domains
+docker compose --profile access --profile aggregation up --build
+```
+
+Wait for both `access-api` and `agg-api` to log `Application startup complete`.
+The access domain automatically loads the PON resource inventory from `BBF_access/`
+at startup — no manual seeding of resource data is required.
+
+### Architecture for this step
+
+```
+Aggregation domain (:8000)          Access domain (:8001)
+tmf921-agg dataset                  tmf921-access dataset
+                                    PON resource inventory loaded at startup
+                                    (OLT-001, OLT-002, 10 UNI ports, SVLAN/CTAG pools)
+
+   seed_aggregation.py
+        │
+        ├─ 1. Register hub subscription on access domain
+        │      POST :8001/hub  callback → :8000/listener
+        │
+        ├─ 2. POST ProbeIntent → :8001/intent
+        │      expression: "can you deliver ≥ 100 Mbps with an available UNI?"
+        │
+        │                    Access domain evaluates:
+        │                    - set:resourcesOfType pon:UNIPort → finds UNI-001-1 etc.
+        │                    - set:resourcesWithPropertyObject (pon:inUse false) → filters free UNIs
+        │                    - quan:quanatLeast ≥ 100 Mbps → checks against observations
+        │                    - auto-transitions probe: ACTIVE (pass) or TERMINATED (fail)
+        │
+        ├─ 3. Poll :8001/intent/{probeId} for ACTIVE or TERMINATED
+        │
+        └─ 4. If ACTIVE → POST full HSI Intent → :8001/intent
+                         (aggregation domain commits to the service)
+```
+
+### Run the automated demo
+
+```bash
+# Terminal 2
+python seed_data/seed_aggregation.py \
+    --agg-url  http://localhost:8000 \
+    --access-url http://localhost:8001
+```
+
+The script prints each step as it runs and reports the final probe result. A passing
+run ends with:
+
+```
+Probe result: lifecycleStatus = ACTIVE
+Probe passed — posting full HSI Intent to access domain…
+  Created Intent: <uuid> — AGG→ACCESS: HSI service request — BBF_SUB_12345
+```
+
+### Inspect the access domain resource state
+
+After a successful run, query the access domain's resources graph to see which UNI
+was selected and confirm `pon:inUse` has been set to `true`:
+
+```bash
+curl -s -X POST "http://localhost:3030/tmf921-access/sparql" \
+  -H "Content-Type: application/sparql-query" \
+  -d "
+PREFIX pon: <http://broadband-forum.org/ont/pon-resource#>
+
+SELECT ?uni ?inUse ?assignedTo
+WHERE {
+  GRAPH <http://tmforum.org/api/v5/resources> {
+    ?uni a pon:UNIPort ;
+         pon:inUse ?inUse .
+    OPTIONAL { ?uni pon:assignedToService ?assignedTo }
+  }
+}
+ORDER BY ?uni
+" | python3 -m json.tool
+```
+
+Expected: the UNI selected by the handler shows `pon:inUse true` and
+`pon:assignedToService` set to the HSI intent UUID. All other UNIs remain `false`.
+
+### Probe fails — what to expect
+
+If the access domain has no observations for the performance metrics and
+`HANDLER_LIMITS_JSON` is unset, the `quan:quanatLeast ≥ 100 Mbps` condition
+will have no observed value and evaluate as Degraded. The probe transitions to
+`TERMINATED` and the script prints guidance on relaxing the bounds or configuring
+operator limits.
+
+To make the probe pass unconditionally on the bandwidth condition, post an
+observation to the access domain **after** the probe is created:
+
+```bash
+# Get the probe ID from the script output, then:
+PROBE_ID="<uuid from script output>"
+curl -s -X POST \
+  "http://localhost:8001/tmf-api/intentManagement/v5/intent/$PROBE_ID/observation" \
+  -H "Content-Type: application/json" \
+  -d '{"metricUri": "http://broadband-forum.org/Intent#ProbeDownstreamMetric", "value": 150.0}'
+```
+
+Then patch the probe to re-trigger evaluation:
+
+```bash
+curl -s -X PATCH \
+  "http://localhost:8001/tmf-api/intentManagement/v5/intent/$PROBE_ID" \
+  -H "Content-Type: application/merge-patch+json" \
+  -d '{"description": "re-evaluate with observation"}'
+```
+
+---
+
 ## What to look at in the code
 
 | Location | What it does |
@@ -756,3 +919,9 @@ evaluation cycle will confirm the bound is now achievable and produce a `Fulfill
 | `src/handler/dispatcher.py:_try_best_propose()` | Flow 3: substitutes best-effort bounds, PATCHes expressionValue |
 | `src/handler/limits.py:apply_best_effort_bounds()` | Parses Turtle, finds failed quantity nodes, updates bound rdf:value |
 | `src/api/routers/observation.py` | `POST /intent/{id}/observation` endpoint |
+| `src/graph/schema_init.py:load_resources()` | Loads `RESOURCE_DATA_DIR` TTL files into the resources named graph at startup |
+| `src/handler/evaluator.py:evaluate_intent()` | Merges resources graph into evaluation context so set constructors resolve against inventory |
+| `BBF_access/pon_resource_onto.ttl` | OWL ontology for OLT/ONT/UNI/SVLAN/CTAG resources |
+| `BBF_access/pon_resource_data.ttl` | Seed instances — 2 OLTs, 5 ONTs, 10 UNI ports, SVLAN/CTAG pools |
+| `seed_data/seed_access.py` | Seeds the HSI intent to the access domain |
+| `seed_data/seed_aggregation.py` | Runs the full F-interface ProbeIntent → HSI intent flow |
