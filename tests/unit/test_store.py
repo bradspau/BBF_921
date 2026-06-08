@@ -333,9 +333,58 @@ class TestSchemaInit:
         assert route.called
 
     @respx.mock
+    async def test_load_resources_skips_when_env_unset(self, monkeypatch):
+        import src.graph.schema_init as si
+        monkeypatch.setattr(si, "_RESOURCE_DATA_DIR", "")
+        async with FusekiClient(FUSEKI, DATASET) as client:
+            await si.load_resources(client)  # must not raise, no HTTP calls made
+
+    @respx.mock
+    async def test_load_resources_skips_missing_dir(self, tmp_path, monkeypatch):
+        import src.graph.schema_init as si
+        monkeypatch.setattr(si, "_RESOURCE_DATA_DIR", str(tmp_path / "nonexistent"))
+        async with FusekiClient(FUSEKI, DATASET) as client:
+            await si.load_resources(client)  # must not raise
+
+    @respx.mock
+    async def test_load_resources_skips_empty_dir(self, tmp_path, monkeypatch):
+        import src.graph.schema_init as si
+        monkeypatch.setattr(si, "_RESOURCE_DATA_DIR", str(tmp_path))
+        async with FusekiClient(FUSEKI, DATASET) as client:
+            await si.load_resources(client)  # must not raise
+
+    @respx.mock
+    async def test_load_resources_posts_ttl_files(self, tmp_path, monkeypatch):
+        import src.graph.schema_init as si
+        (tmp_path / "onto.ttl").write_text("@prefix pon: <http://broadband-forum.org/ont/pon-resource#> .")
+        (tmp_path / "data.ttl").write_text("@prefix pon: <http://broadband-forum.org/ont/pon-resource#> . pon:UNI-001 a pon:UNIPort .")
+        monkeypatch.setattr(si, "_RESOURCE_DATA_DIR", str(tmp_path))
+        route = respx.post(f"{FUSEKI}/{DATASET}/data").mock(
+            return_value=httpx.Response(200)
+        )
+        async with FusekiClient(FUSEKI, DATASET) as client:
+            await si.load_resources(client)
+        assert route.call_count == 2
+
+    @respx.mock
+    async def test_load_resources_posts_to_resources_graph(self, tmp_path, monkeypatch):
+        import src.graph.schema_init as si
+        from src.graph.namespaces import RESOURCES_GRAPH
+        (tmp_path / "data.ttl").write_text("@prefix pon: <http://broadband-forum.org/ont/pon-resource#> . pon:UNI-001 a pon:UNIPort .")
+        monkeypatch.setattr(si, "_RESOURCE_DATA_DIR", str(tmp_path))
+        route = respx.post(f"{FUSEKI}/{DATASET}/data").mock(
+            return_value=httpx.Response(200)
+        )
+        async with FusekiClient(FUSEKI, DATASET) as client:
+            await si.load_resources(client)
+        from urllib.parse import quote
+        assert quote(str(RESOURCES_GRAPH), safe="") in str(route.calls[0].request.url)
+
+    @respx.mock
     async def test_initialise_schema_runs_full_sequence(self, tmp_path, monkeypatch):
         import src.graph.schema_init as si
-        monkeypatch.setattr(si, "ONTOLOGY_DIR", tmp_path)  # empty → skip ontology
+        monkeypatch.setattr(si, "ONTOLOGY_DIR", tmp_path)   # empty → skip ontology
+        monkeypatch.setattr(si, "_RESOURCE_DATA_DIR", "")   # unset → skip resources
         respx.post(f"{FUSEKI}/$/datasets").mock(return_value=httpx.Response(201))
         async with FusekiClient(FUSEKI, DATASET) as client:
             await initialise_schema(client)  # must not raise
