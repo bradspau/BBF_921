@@ -18,6 +18,19 @@ services:
       retries: 10
       start_period: 30s
 
+  # ── Default (no profile) — behaves as before ────────────────────────────────
+  app:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      FUSEKI_BASE_URL: http://fuseki:3030
+      FUSEKI_DATASET: tmf921
+      LOG_LEVEL: info
+    depends_on:
+      fuseki:
+        condition: service_healthy
+
   # ── Access Domain ─────────────────────────────────────────────────────────────
   # Manages UNI/ONT/OLT resources and evaluates HSI intents against them.
   # Loads PON resource inventory from BBF_access/ at startup.
