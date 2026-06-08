@@ -164,6 +164,18 @@ The owner asks "can you satisfy these terms?" by creating a `ProbeIntent` that r
 3. Owner   reads result via GET /intent/{probeId} or intentStatusChangeEvent
 ```
 
+**What you must include in the POST body:**
+
+| Field | Required | Notes |
+|---|---|---|
+| `@type` | Yes | Must be `"ProbeIntent"` — not `"Intent"` |
+| `intentRelationship[].id` | Yes | UUID of the parent Intent this probe relates to |
+| `intentRelationship[].relationshipType` | Yes | `"relatesTo"` |
+| `expression.@type` | Yes | Must be `"TurtleExpression"` — a `JsonLdExpression` cannot be evaluated and will always result in `TERMINATED` |
+| `expression.expressionValue` | Yes | Turtle string expressing the terms you are probing |
+
+The ProbeIntent's expression is evaluated **independently** — it does not inherit the parent intent's observations. If your probe expression references metric URIs, post observations against the ProbeIntent's own ID to provide values.
+
 ### Flow 2 — Judge/Preference (owner adjusts degraded intent)
 
 When conditions degrade and the owner patches new preference values, the handler re-evaluates and auto-transitions back to `ACTIVE` if the revised expression passes. See `docs/06-negotiation.md`.
@@ -173,17 +185,37 @@ When conditions degrade and the owner patches new preference values, the handler
 When a `TurtleExpression` intent evaluates as `Degraded`, the handler substitutes best-effort bound values into the expression and patches the intent, then waits for owner approval:
 
 ```
-1. Owner   POST /intent  (TurtleExpression with strict bounds)
+1. Owner   POST /intent  (TurtleExpression with desired bounds — your "ask")
 2. Handler evaluates → Degraded → PATCH expressionValue with best-effort bounds
            fires intentAttributeValueChangeEvent
-3. Owner   inspects updated expression → PATCH lifecycleStatus ACTIVE to approve
+3. Owner   GET /intent/{id} to inspect the proposed bounds
+           PATCH lifecycleStatus ACTIVE to accept, or TERMINATED to reject
 ```
 
-Best-effort bound selection priority:
-1. **Observed value** from the last evaluation cycle (what the system actually measured)
-2. **`HANDLER_LIMITS_JSON`** operator-declared capacity (fallback when no observation)
+**Roles — who sets what:**
 
-Flow 3 only applies to `TurtleExpression` intents — `JsonLdExpression` content is opaque and cannot be programmatically mutated.
+| Who | What they set | When |
+|---|---|---|
+| **Owner** | The desired (strict) bounds in the `expressionValue` Turtle | At `POST /intent` time |
+| **Handler** | The achievable (relaxed) bounds substituted back into the expression | Automatically after Degraded evaluation |
+| **Operator** | `HANDLER_LIMITS_JSON` — declared capacity used as a fallback | At server startup via environment variable |
+
+**Best-effort bound selection (per failed condition, in priority order):**
+1. **Observed value** from the last evaluation cycle — the value the system actually measured
+2. **`HANDLER_LIMITS_JSON[condition_type]`** — operator-declared capacity limit (used when no observation exists)
+3. **No substitution** — if neither is available for a condition, that condition is left unchanged and no PATCH is made
+
+**`HANDLER_LIMITS_JSON` key names** map to TIO quantity condition type short names:
+
+| Key | Condition | Meaning |
+|---|---|---|
+| `"quanatLeast"` or `"atLeast"` | `quan:quanatLeast` / `quan:atLeast` | Minimum threshold (`≥`) |
+| `"quanatMost"` or `"atMost"` | `quan:quanatMost` / `quan:atMost` | Maximum threshold (`≤`) |
+| `"quangreater"` or `"greater"` | `quan:quangreater` / `quan:greater` | Strict minimum (`>`) |
+| `"quansmaller"` or `"smaller"` | `quan:quansmaller` / `quan:smaller` | Strict maximum (`<`) |
+| `"quanexactly"` or `"exactly"` | `quan:quanexactly` / `quan:exactly` | Exact value (`==`) |
+
+Flow 3 only applies to `TurtleExpression` intents in `ACKNOWLEDGED` or `ACTIVE` state — `JsonLdExpression` content is opaque and is never modified.
 
 ---
 

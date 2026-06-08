@@ -422,6 +422,23 @@ to a full intent. The handler evaluates the ProbeIntent expression and auto-tran
 - `Fulfilled` → `ACTIVE` — the handler accepts the proposed terms
 - `Degraded` → `TERMINATED` — the handler cannot satisfy the terms
 
+### What you implement
+
+You are responsible for three things in the `POST /intent` request:
+
+1. **`@type: "ProbeIntent"`** — tells the API this is a capability probe, not a binding intent
+2. **`intentRelationship`** — an array entry with the parent intent's `id` and `"relationshipType": "relatesTo"`
+3. **`expression`** — must be `@type: "TurtleExpression"` with a `expressionValue` Turtle string defining the terms you want to probe
+
+The handler does the rest automatically: it evaluates the expression immediately after creation
+and patches `lifecycleStatus` to `ACTIVE` or `TERMINATED` based on the result.
+
+> **Important:** Use `TurtleExpression` — a `JsonLdExpression` cannot be evaluated by the handler
+> and will always result in `TERMINATED`.
+
+> **Important:** The ProbeIntent has its own observation graph. If your expression references
+> metric URIs, post observations to `POST /intent/{probeId}/observation` — not the parent intent's ID.
+
 This example uses structural `log:match` facts asserted inline so the result is
 deterministic without requiring observations.
 
@@ -500,6 +517,21 @@ When an intent's `TurtleExpression` evaluates as Degraded, the handler automatic
 1. Substitutes best-effort bound values into the failed conditions' `expressionValue`
 2. PATCHes the intent with the updated expression and fires `intentAttributeValueChangeEvent`
 3. Waits for the owner to inspect and approve by PATCHing `lifecycleStatus: ACTIVE`
+
+### What you implement
+
+**Owner (you):** Set the desired bounds in the `expressionValue` Turtle when you `POST /intent`.
+These are your "ask" — the best outcome you want. The handler reads them, evaluates against
+real observations, and proposes what it can actually deliver.
+
+**Operator (server config):** Optionally set `HANDLER_LIMITS_JSON` as a fallback for conditions
+that have no observations yet. Without this, Flow 3 can only propose bounds when an observation
+exists. If neither observations nor a matching limits entry are available for a failed condition,
+the handler makes no PATCH and the intent stays Degraded with the original expression unchanged.
+
+**Handler (automatic):** No additional configuration is needed to trigger Flow 3. It fires
+automatically after every Degraded evaluation on a `TurtleExpression` intent in `ACKNOWLEDGED`
+or `ACTIVE` state.
 
 The best-effort bound comes from the **observed value** in the last evaluation cycle
 (primary), falling back to **`HANDLER_LIMITS_JSON`** if no observation exists.
