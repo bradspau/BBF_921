@@ -130,7 +130,7 @@ HSI_INTENT=$(curl -s -X POST http://localhost:8000/tmf-api/intentManagement/v5/i
     "expression": {
       "@type": "TurtleExpression",
       "iri": "http://broadband-forum.org/Intent#HSIIntent",
-      "expressionValue": "@prefix bbf:  <http://broadband-forum.org/Intent#> .\n@prefix rdf:  <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .\n@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .\n@prefix icm:  <http://tio.models.tmforum.org/tio/v3.6.0/IntentCommonModel/> .\n@prefix log:  <http://tio.models.tmforum.org/tio/v3.6.0/LogicalOperators/> .\n@prefix quan: <http://tio.models.tmforum.org/tio/v3.6.0/QuantityOntology/> .\n@prefix met:  <http://tio.models.tmforum.org/tio/v3.6.0/MetricsAndObservations/> .\n@prefix xsd:  <http://www.w3.org/2001/XMLSchema#> .\n\nbbf:HSICompositeExpectation\n    log:allOf (\n        bbf:DeliveryCheck\n        bbf:UNICheck\n        bbf:PerformanceCheck\n    ) .\n\nbbf:DeliveryCheck  a icm:DeliveryExpectation ;\n    icm:target       bbf:SelectedUNIInterface ;\n    icm:deliveryType bbf:HSIService .\n\nbbf:SelectedUNIInterface\n    rdfs:member bbf:HSIServiceInstance .\n\nbbf:HSIServiceInstance  a bbf:HSIService .\n\nbbf:UNICheck\n    log:allOf (\n        bbf:UNIUpCondition\n        bbf:UNIReadyCondition\n    ) .\n\nbbf:UNIUpCondition\n    log:match ( bbf:SelectedUNIInterface\n                bbf:operationalState\n                bbf:OperationalUp ) .\n\nbbf:UNIReadyCondition\n    log:match ( bbf:SelectedUNIInterface\n                bbf:provisioningState\n                bbf:Ready ) .\n\nbbf:SelectedUNIInterface\n    bbf:operationalState  bbf:OperationalUp ;\n    bbf:provisioningState bbf:Ready .\n\nbbf:PerformanceCheck\n    log:allOf (\n        bbf:DL_Check\n        bbf:UL_Check\n        bbf:Lat_Check\n        bbf:Jit_Check\n        bbf:PL_Check\n    ) .\n\nbbf:DL_Check  a quan:quanatLeast ;\n    rdf:first bbf:DownstreamBandwidthMetric ;\n    rdf:rest  [ rdf:first bbf:DL_Bound ] .\nbbf:DL_Bound  rdf:value \"100\"^^xsd:decimal .\n\nbbf:UL_Check  a quan:quanatLeast ;\n    rdf:first bbf:UpstreamBandwidthMetric ;\n    rdf:rest  [ rdf:first bbf:UL_Bound ] .\nbbf:UL_Bound  rdf:value \"20\"^^xsd:decimal .\n\nbbf:Lat_Check  a quan:quansmaller ;\n    rdf:first bbf:LatencyMetric ;\n    rdf:rest  [ rdf:first bbf:Lat_Bound ] .\nbbf:Lat_Bound  rdf:value \"25\"^^xsd:decimal .\n\nbbf:Jit_Check  a quan:quansmaller ;\n    rdf:first bbf:JitterMetric ;\n    rdf:rest  [ rdf:first bbf:Jit_Bound ] .\nbbf:Jit_Bound  rdf:value \"3\"^^xsd:decimal .\n\nbbf:PL_Check  a quan:quansmaller ;\n    rdf:first bbf:PacketLossMetric ;\n    rdf:rest  [ rdf:first bbf:PL_Bound ] .\nbbf:PL_Bound  rdf:value \"0.1\"^^xsd:decimal .\n"
+      "expressionValue": "@prefix bbf:  <http://broadband-forum.org/Intent#> .\n@prefix rdf:  <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .\n@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .\n@prefix icm:  <http://tio.models.tmforum.org/tio/v3.6.0/IntentCommonModel/> .\n@prefix log:  <http://tio.models.tmforum.org/tio/v3.6.0/LogicalOperators/> .\n@prefix quan: <http://tio.models.tmforum.org/tio/v3.6.0/QuantityOntology/> .\n@prefix xsd:  <http://www.w3.org/2001/XMLSchema#> .\n\nbbf:HSICompositeExpectation\n    log:allOf (\n        bbf:DeliveryCheck\n        bbf:UNICheck\n        bbf:PerformanceCheck\n    ) .\n\nbbf:DeliveryCheck  a icm:DeliveryExpectation ;\n    icm:target       bbf:SelectedUNIInterface ;\n    icm:deliveryType bbf:HSIService .\n\nbbf:SelectedUNIInterface\n    rdfs:member bbf:HSIServiceInstance .\n\nbbf:HSIServiceInstance  a bbf:HSIService .\n\nbbf:UNICheck\n    log:allOf (\n        bbf:UNIUpCondition\n        bbf:UNIReadyCondition\n    ) .\n\nbbf:UNIUpCondition\n    log:match ( bbf:SelectedUNIInterface\n                bbf:operationalState\n                bbf:OperationalUp ) .\n\nbbf:UNIReadyCondition\n    log:match ( bbf:SelectedUNIInterface\n                bbf:provisioningState\n                bbf:Ready ) .\n\nbbf:SelectedUNIInterface\n    bbf:operationalState  bbf:OperationalUp ;\n    bbf:provisioningState bbf:Ready .\n\nbbf:PerformanceCheck\n    log:allOf (\n        bbf:DL_Check\n        bbf:UL_Check\n        bbf:Lat_Check\n        bbf:Jit_Check\n        bbf:PL_Check\n    ) .\n\nbbf:DL_Check  quan:atLeast ( bbf:DownstreamBandwidthMetric\n              [ rdf:value \"100\"^^xsd:decimal ] ) .\n\nbbf:UL_Check  quan:atLeast ( bbf:UpstreamBandwidthMetric\n              [ rdf:value \"20\"^^xsd:decimal ] ) .\n\nbbf:Lat_Check  quan:smaller ( bbf:LatencyMetric\n               [ rdf:value \"25\"^^xsd:decimal ] ) .\n\nbbf:Jit_Check  quan:smaller ( bbf:JitterMetric\n               [ rdf:value \"3\"^^xsd:decimal ] ) .\n\nbbf:PL_Check  quan:smaller ( bbf:PacketLossMetric\n              [ rdf:value \"0.1\"^^xsd:decimal ] ) .\n"
     }
   }')
 
@@ -402,7 +402,7 @@ curl -s -X POST "http://localhost:3030/tmf921/sparql" \
 
 **Query the handlerState conditions:**
 
-Two-argument conditions (`quanatLeast`, `quansmaller`, etc.) use `imo:boundValue`.
+Two-argument conditions (`atLeast`, `smaller`, etc.) use `imo:boundValue`.
 Range conditions (`quaninRange`) use `imo:lowerBound` + `imo:upperBound` instead.
 The query below handles both — null columns simply won't appear in the binding:
 
@@ -433,7 +433,7 @@ Expected output after Step 4 (Fulfilled state) — two-argument conditions:
   "results": {
     "bindings": [
       {
-        "type":     { "value": "...quanatLeast" },
+        "type":     { "value": "...atLeast" },
         "observed": { "value": "150" },
         "bound":    { "value": "100" },
         "passed":   { "value": "true" }
@@ -480,11 +480,11 @@ then click **Run query**.
 
 | Condition | Type | Threshold | Pass example | Fail example |
 |---|---|---|---|---|
-| Downstream BW | `quan:quanatLeast` | ≥ 100 Mbps | 150 | 80 |
-| Upstream BW | `quan:quanatLeast` | ≥ 20 Mbps | 30 | 15 |
-| Latency | `quan:quansmaller` | < 25 ms | 8 | 40 |
-| Jitter | `quan:quansmaller` | < 3 ms | 1.2 | 5 |
-| Packet loss | `quan:quansmaller` | < 0.1 % | 0.02 | 0.2 |
+| Downstream BW | `quan:atLeast` | ≥ 100 Mbps | 150 | 80 |
+| Upstream BW | `quan:atLeast` | ≥ 20 Mbps | 30 | 15 |
+| Latency | `quan:smaller` | < 25 ms | 8 | 40 |
+| Jitter | `quan:smaller` | < 3 ms | 1.2 | 5 |
+| Packet loss | `quan:smaller` | < 0.1 % | 0.02 | 0.2 |
 | UNI operational | `log:match` | operationalState = OperationalUp | asserted in expression | remove triple |
 | UNI ready | `log:match` | provisioningState = Ready | asserted in expression | remove triple |
 | Service delivery | `icm:DeliveryExpectation` | target container has HSIService member | asserted in expression | remove rdfs:member |
@@ -633,13 +633,13 @@ With Docker Compose, add it to the `app` service environment in `docker-compose.
 
 ```yaml
 environment:
-  HANDLER_LIMITS_JSON: '{"quanatLeast": 80.0, "quansmaller": 30.0}'
+  HANDLER_LIMITS_JSON: '{"atLeast": 80.0, "smaller": 30.0}'
 ```
 
 Or export it before starting the local dev server:
 
 ```bash
-export HANDLER_LIMITS_JSON='{"quanatLeast": 80.0, "quansmaller": 30.0}'
+export HANDLER_LIMITS_JSON='{"atLeast": 80.0, "smaller": 30.0}'
 .venv/bin/uvicorn src.main:app --reload
 ```
 
@@ -657,7 +657,7 @@ STRICT=$(curl -s -X POST http://localhost:8000/tmf-api/intentManagement/v5/inten
     "expression": {
       "@type": "TurtleExpression",
       "iri": "http://broadband-forum.org/Intent#StrictBW",
-      "expressionValue": "@prefix bbf: <http://broadband-forum.org/Intent#> .\n@prefix quan: <http://tio.models.tmforum.org/tio/v3.6.0/QuantityOntology/> .\n@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .\n@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .\n\nbbf:DL_Check a quan:quanatLeast ;\n    rdf:first bbf:DownstreamBandwidthMetric ;\n    rdf:rest  [ rdf:first bbf:DL_Bound ] .\nbbf:DL_Bound rdf:value \"500\"^^xsd:decimal .\n"
+      "expressionValue": "@prefix bbf: <http://broadband-forum.org/Intent#> .\n@prefix quan: <http://tio.models.tmforum.org/tio/v3.6.0/QuantityOntology/> .\n@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .\n@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .\n\nbbf:DL_Check  quan:atLeast ( bbf:DownstreamBandwidthMetric\n              [ rdf:value \"500\"^^xsd:decimal ] ) .\n"
     }
   }')
 
@@ -723,7 +723,7 @@ evaluation cycle will confirm the bound is now achievable and produce a `Fulfill
 | `src/handler/evaluator.py:_latest_observation_value()` | Picks the most-recent `met:Observation` by `obtainedAt` timestamp |
 | `src/handler/evaluator.py:_eval_delivery_expectation()` | Checks `icm:target` container membership |
 | `src/handler/evaluator.py:_eval_match()` | Checks a single `(s, p, o)` triple exists |
-| `src/handler/evaluator.py:_eval_two_arg()` | Evaluates `quanatLeast`, `quansmaller`, etc. with Decimal precision |
+| `src/handler/evaluator.py:_eval_two_arg()` | Evaluates `atLeast`, `smaller`, etc. with Decimal precision |
 | `src/handler/state_writer.py:build_handler_state_turtle()` | Serialises per-condition results to RDF |
 | `src/handler/observation_store.py:write_observation()` | Appends a `met:Observation` to the observation graph |
 | `src/handler/dispatcher.py:dispatch_evaluation()` | Orchestrates evaluate → write state → create report → notify |
