@@ -463,11 +463,11 @@ export HANDLER_LIMITS_JSON='{"quanatLeast": 100.0}'
 
 | Condition | Type | Threshold | Pass example | Fail example |
 |---|---|---|---|---|
-| Downstream BW | `quan:quanatLeast` | ≥ 100 Mbps | 150 | 80 |
-| Upstream BW | `quan:quanatLeast` | ≥ 20 Mbps | 30 | 15 |
-| Latency | `quan:quansmaller` | < 25 ms | 8 | 40 |
-| Jitter | `quan:quansmaller` | < 3 ms | 1.2 | 5 |
-| Packet loss | `quan:quansmaller` | < 0.1 % | 0.02 | 0.2 |
+| Downstream BW | `quan:atLeast` | ≥ 100 Mbps | 150 | 80 |
+| Upstream BW | `quan:atLeast` | ≥ 20 Mbps | 30 | 15 |
+| Latency | `quan:smaller` | < 25 ms | 8 | 40 |
+| Jitter | `quan:smaller` | < 3 ms | 1.2 | 5 |
+| Packet loss | `quan:smaller` | < 0.1 % | 0.02 | 0.2 |
 | UNI operational | `log:match` | `pon:operationalState pon:Up` | UNI in inventory | `pon:Down` UNI excluded by set filter |
 | UNI ready | `log:match` | `pon:provisioningState pon:Ready` | UNI in inventory | `pon:Configuring` UNI excluded |
 | UNI available | set constructor | `pon:inUse false` | free UNI | UNI-002-1 excluded |

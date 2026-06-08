@@ -105,7 +105,7 @@ bbf:HSIServiceTarget  a icm:Target ;
 ############################################################
 
 # Downstream bandwidth >= 100 Mbps
-bbf:HSI_DownstreamBandwidthCondition  a icm:Condition, quan:quanatLeast ;
+bbf:HSI_DownstreamBandwidthCondition  a icm:Condition, quan:atLeast ;
     rdf:first bbf:DownstreamBandwidthMetric ;
     rdf:rest  [ rdf:first bbf:HSI_DL_Bound ] .
 
@@ -113,7 +113,7 @@ bbf:HSI_DL_Bound  rdf:value "100"^^xsd:decimal ;
     quan:unit "Mbps"^^xsd:string .
 
 # Upstream bandwidth >= 20 Mbps
-bbf:HSI_UpstreamBandwidthCondition  a icm:Condition, quan:quanatLeast ;
+bbf:HSI_UpstreamBandwidthCondition  a icm:Condition, quan:atLeast ;
     rdf:first bbf:UpstreamBandwidthMetric ;
     rdf:rest  [ rdf:first bbf:HSI_UL_Bound ] .
 
@@ -121,7 +121,7 @@ bbf:HSI_UL_Bound  rdf:value "20"^^xsd:decimal ;
     quan:unit "Mbps"^^xsd:string .
 
 # Latency < 25 ms
-bbf:HSI_LatencyCondition  a icm:Condition, quan:quansmaller ;
+bbf:HSI_LatencyCondition  a icm:Condition, quan:smaller ;
     rdf:first bbf:LatencyMetric ;
     rdf:rest  [ rdf:first bbf:HSI_Lat_Bound ] .
 
@@ -129,7 +129,7 @@ bbf:HSI_Lat_Bound  rdf:value "25"^^xsd:decimal ;
     quan:unit "ms"^^xsd:string .
 
 # Jitter < 3 ms
-bbf:HSI_JitterCondition  a icm:Condition, quan:quansmaller ;
+bbf:HSI_JitterCondition  a icm:Condition, quan:smaller ;
     rdf:first bbf:JitterMetric ;
     rdf:rest  [ rdf:first bbf:HSI_Jit_Bound ] .
 
@@ -137,7 +137,7 @@ bbf:HSI_Jit_Bound  rdf:value "3"^^xsd:decimal ;
     quan:unit "ms"^^xsd:string .
 
 # Packet loss < 0.1 %
-bbf:HSI_PacketLossCondition  a icm:Condition, quan:quansmaller ;
+bbf:HSI_PacketLossCondition  a icm:Condition, quan:smaller ;
     rdf:first bbf:PacketLossMetric ;
     rdf:rest  [ rdf:first bbf:HSI_PL_Bound ] .
 
