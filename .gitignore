@@ -26,3 +26,6 @@ wheels/
 
 # Session working notes (not part of the deliverable)
 session_prompts/
+
+# Ontology TTL files — reference data only, not a runtime dependency
+ontology/
