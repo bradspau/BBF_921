@@ -281,8 +281,11 @@ flowchart TD
     NS -->|"POST callback"| Hub
     D -->|"asyncio.wait_for + timeout"| E
     E -->|"evaluate_turtle_conditions"| SW
-    D -->|"Flow 3 bound substitution"| LM
-    LM -->|"apply_best_effort_bounds"| D
+    D -->|"Flow 1: read type / Flow 3: read expression"| IR
+    IR -->|"intent dict"| D
+    D -->|"Flow 3: read limits fallback"| LM
+    LM -->|"best-effort bounds"| D
+    D -->|"Flow 1: PATCH lifecycleStatus\nFlow 3: PATCH expressionValue"| IR
     SW --> RR
     SW --> NS
     OS --> FC
