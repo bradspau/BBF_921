@@ -458,6 +458,51 @@ def _build_obs_index(
     return {m: v for m, (_, v) in best.items()}
 
 
+def _normalize_qty_predicates(g: rdflib.Graph) -> None:
+    """
+    Normalise predicate-form quantity conditions to the type form expected by
+    _eval_two_arg and _resolve_metric_refs.
+
+    Canonical TIO usage applies the function URI as a predicate:
+        ?cond  quan:atLeast  ( ?metric  ?bound ) .
+
+    This normaliser rewrites that to the type form:
+        ?cond  a             quan:atLeast .
+        ?cond  rdf:first     ?metric .
+        ?cond  rdf:rest      <rest-node> .
+
+    so the rest of the pipeline sees a single representation.  Range
+    conditions (quan:inRange / quan:quaninRange) use the same three-element
+    list and are handled identically.  Already-normalised type-form nodes
+    (those that already have rdf:first) are skipped.
+    """
+    range_types = (_QUAN.quaninRange, _QUAN.inRange)
+    for rdf_type, _, _ in _TWO_ARG_OPS:
+        for cond, list_node in list(g.subject_objects(rdf_type)):
+            if g.value(cond, RDF.first) is not None:
+                continue
+            arg1 = g.value(list_node, RDF.first)
+            if arg1 is None:
+                continue
+            g.add((cond, RDF.type, rdf_type))
+            g.add((cond, RDF.first, arg1))
+            rest = g.value(list_node, RDF.rest)
+            if rest is not None:
+                g.add((cond, RDF.rest, rest))
+    for rdf_type in range_types:
+        for cond, list_node in list(g.subject_objects(rdf_type)):
+            if g.value(cond, RDF.first) is not None:
+                continue
+            arg1 = g.value(list_node, RDF.first)
+            if arg1 is None:
+                continue
+            g.add((cond, RDF.type, rdf_type))
+            g.add((cond, RDF.first, arg1))
+            rest = g.value(list_node, RDF.rest)
+            if rest is not None:
+                g.add((cond, RDF.rest, rest))
+
+
 def _resolve_metric_refs(g: rdflib.Graph) -> None:
     """
     Inject rdf:value on metric/function nodes so quantity comparators can fire.
@@ -1665,6 +1710,7 @@ def evaluate_turtle_conditions(turtle_str: str) -> dict:
     except Exception as exc:
         return {"intentHandlingState": "Degraded", "reason": f"Turtle parse error: {exc}", "conditions": []}
 
+    _normalize_qty_predicates(g)
     _resolve_metric_refs(g)
     _compute_math_functions(g)
     _compute_set_constructors(g)

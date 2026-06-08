@@ -4326,3 +4326,88 @@ class TestScheduleEvaluation:
             task = schedule_evaluation(INTENT_ID, mock_client, mock_report_repo, mock_hub_repo)
             assert INTENT_ID in task.get_name()
             await task
+
+
+class TestNormalizeQtyPredicates:
+    """_normalize_qty_predicates converts predicate-form TIO to type-form."""
+
+    def test_atLeast_predicate_form_evaluates_fulfilled(self):
+        turtle = """\
+@prefix bbf: <http://broadband-forum.org/Intent#> .
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix quan: <http://tio.models.tmforum.org/tio/v3.6.0/QuantityOntology/> .
+@prefix met: <http://tio.models.tmforum.org/tio/v3.6.0/MetricsAndObservations/> .
+@prefix log: <http://tio.models.tmforum.org/tio/v3.6.0/LogicalOperators/> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+
+bbf:check log:allOf ( bbf:DLCond ) .
+bbf:DLCond  quan:atLeast ( bbf:DLMetric
+              [ rdf:value "100"^^xsd:decimal ] ) .
+bbf:DLMetric  rdf:value "150"^^xsd:decimal .
+"""
+        result = evaluate_turtle_conditions(turtle)
+        assert result["intentHandlingState"] == "Fulfilled"
+        assert result["conditions"][0]["observed"] == 150
+        assert result["conditions"][0]["bound"] == 100
+
+    def test_smaller_predicate_form_evaluates_degraded(self):
+        turtle = """\
+@prefix bbf: <http://broadband-forum.org/Intent#> .
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix quan: <http://tio.models.tmforum.org/tio/v3.6.0/QuantityOntology/> .
+@prefix log: <http://tio.models.tmforum.org/tio/v3.6.0/LogicalOperators/> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+
+bbf:check log:allOf ( bbf:LatCond ) .
+bbf:LatCond  quan:smaller ( bbf:LatMetric
+               [ rdf:value "25"^^xsd:decimal ] ) .
+bbf:LatMetric  rdf:value "40"^^xsd:decimal .
+"""
+        result = evaluate_turtle_conditions(turtle)
+        assert result["intentHandlingState"] == "Degraded"
+        assert result["conditions"][0]["observed"] == 40
+        assert result["conditions"][0]["bound"] == 25
+
+    def test_predicate_form_mixed_with_type_form(self):
+        """Both forms in the same expression are normalised and both fire."""
+        turtle = """\
+@prefix bbf: <http://broadband-forum.org/Intent#> .
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix quan: <http://tio.models.tmforum.org/tio/v3.6.0/QuantityOntology/> .
+@prefix log: <http://tio.models.tmforum.org/tio/v3.6.0/LogicalOperators/> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+
+bbf:check log:allOf ( bbf:CondA  bbf:CondB ) .
+
+# predicate form
+bbf:CondA  quan:atLeast ( bbf:MetricA  [ rdf:value "100"^^xsd:decimal ] ) .
+bbf:MetricA  rdf:value "120"^^xsd:decimal .
+
+# type form
+bbf:CondB  a quan:atLeast ;
+    rdf:first bbf:MetricB ;
+    rdf:rest  [ rdf:first [ rdf:value "50"^^xsd:decimal ] ] .
+bbf:MetricB  rdf:value "60"^^xsd:decimal .
+"""
+        result = evaluate_turtle_conditions(turtle)
+        assert result["intentHandlingState"] == "Fulfilled"
+        assert len(result["conditions"]) == 2
+
+    def test_already_normalised_type_form_not_duplicated(self):
+        """Type-form nodes with rdf:first are skipped; no double evaluation."""
+        turtle = """\
+@prefix bbf: <http://broadband-forum.org/Intent#> .
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix quan: <http://tio.models.tmforum.org/tio/v3.6.0/QuantityOntology/> .
+@prefix log: <http://tio.models.tmforum.org/tio/v3.6.0/LogicalOperators/> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+
+bbf:check log:allOf ( bbf:Cond ) .
+bbf:Cond  a quan:atLeast ;
+    rdf:first bbf:Met ;
+    rdf:rest  [ rdf:first [ rdf:value "10"^^xsd:decimal ] ] .
+bbf:Met  rdf:value "20"^^xsd:decimal .
+"""
+        result = evaluate_turtle_conditions(turtle)
+        assert result["intentHandlingState"] == "Fulfilled"
+        assert len(result["conditions"]) == 1
