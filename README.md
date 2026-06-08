@@ -238,8 +238,8 @@ flowchart TD
     Client(["REST Client"])
     Hub(["Hub Subscriber"])
 
-    subgraph api["API Layer — FastAPI"]
-        R["Routers\nintent · intentReport · intentSpec\nobservation · hub"]
+    subgraph api["API Layer - FastAPI"]
+        R["Routers\nintent / intentReport / intentSpec\nobservation / hub"]
     end
 
     subgraph svc["Service Layer"]
@@ -248,9 +248,9 @@ flowchart TD
         RS["IntentReportService / IntentSpecService"]
     end
 
-    subgraph hdl["Handler Layer  ·  OODA loop"]
-        D["Dispatcher\nFlow 1 ProbeIntent · Flow 2 Judge/Pref · Flow 3 Best/Propose\nbackground asyncio task"]
-        E["Evaluator\nTIO expression eval\nRDFLib · thread executor"]
+    subgraph hdl["Handler Layer - OODA loop"]
+        D["Dispatcher\nFlow 1 ProbeIntent\nFlow 2 Judge/Pref\nFlow 3 Best/Propose"]
+        E["Evaluator\nTIO expression eval\nRDFLib / thread executor"]
         SW["StateWriter\nOODA working memory"]
         OS["ObservationStore\nprune on write"]
         LM["Limits\nHANDLER_LIMITS_JSON\nbest-effort bound fallback"]
@@ -264,25 +264,33 @@ flowchart TD
     end
 
     subgraph graph["Graph Layer"]
-        FC["FusekiClient\nSPARQL 1.1 · Graph Store Protocol\nretry / backoff / split timeouts"]
+        FC["FusekiClient\nSPARQL 1.1 / Graph Store Protocol\nretry / backoff / split timeouts"]
     end
 
     FDB[("Apache Jena Fuseki\nTDB2 persistent named graphs")]
 
     Client -->|"HTTP REST"| R
-    R --> IS & RS & OS
+    R --> IS
+    R --> RS
+    R --> OS
     IS -->|"schedule eval"| D
-    IS --> NS & IR
-    RS --> RR & SR
+    IS --> NS
+    IS --> IR
+    RS --> RR
+    RS --> SR
     NS -->|"POST callback"| Hub
     D -->|"asyncio.wait_for + timeout"| E
     E -->|"evaluate_turtle_conditions"| SW
     D -->|"Flow 3 bound substitution"| LM
     LM -->|"apply_best_effort_bounds"| D
-    SW --> RR & NS
+    SW --> RR
+    SW --> NS
     OS --> FC
-    IR & RR & SR & HR --> FC
-    FC -->|"SPARQL · GSP"| FDB
+    IR --> FC
+    RR --> FC
+    SR --> FC
+    HR --> FC
+    FC -->|"SPARQL / GSP"| FDB
 ```
 
 ### Named graph layout (Fuseki TDB2)
