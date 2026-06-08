@@ -412,6 +412,187 @@ or until the intent handler receives external notification of provisioning compl
 
 ---
 
+---
+
+## Step 9 — Flow 1: ProbeIntent (capability probe)
+
+The ProbeIntent flow lets a client ask "can you satisfy these terms?" without committing
+to a full intent. The handler evaluates the ProbeIntent expression and auto-transitions it:
+
+- `Fulfilled` → `ACTIVE` — the handler accepts the proposed terms
+- `Degraded` → `TERMINATED` — the handler cannot satisfy the terms
+
+This example uses structural `log:match` facts asserted inline so the result is
+deterministic without requiring observations.
+
+### 9a — Probe that passes (structural conditions satisfied inline)
+
+```bash
+PROBE_PASS=$(curl -s -X POST http://localhost:8000/tmf-api/intentManagement/v5/intent \
+  -H "Content-Type: application/json" \
+  -d "{
+    \"@type\": \"ProbeIntent\",
+    \"name\": \"HSI Capability Probe — pass\",
+    \"intentRelationship\": [{
+      \"@type\": \"IntentRelationship\",
+      \"id\": \"$INTENT_ID\",
+      \"relationshipType\": \"relatesTo\",
+      \"referredType\": \"Intent\"
+    }],
+    \"expression\": {
+      \"@type\": \"TurtleExpression\",
+      \"iri\": \"http://broadband-forum.org/Intent#ProbePass\",
+      \"expressionValue\": \"@prefix bbf: <http://broadband-forum.org/Intent#> .\\n@prefix log: <http://tio.models.tmforum.org/tio/v3.6.0/LogicalOperators/> .\\n\\nbbf:ProbeCheck log:allOf ( bbf:UNICheck ) .\\nbbf:UNICheck log:match ( bbf:SelectedUNI bbf:operationalState bbf:OperationalUp ) .\\nbbf:SelectedUNI bbf:operationalState bbf:OperationalUp .\\n\"
+    }
+  }")
+
+echo "$PROBE_PASS" | python3 -m json.tool
+PROBE_PASS_ID=$(echo "$PROBE_PASS" | python3 -c "import sys,json; print(json.load(sys.stdin)['id'])")
+echo "ProbeIntent ID: $PROBE_PASS_ID"
+```
+
+Wait a moment then check the ProbeIntent's status — the handler should have auto-transitioned it:
+
+```bash
+sleep 1
+curl -s "http://localhost:8000/tmf-api/intentManagement/v5/intent/$PROBE_PASS_ID" \
+  | python3 -c "import sys,json; d=json.load(sys.stdin); print('Status:', d['lifecycleStatus'])"
+```
+
+Expected: **`ACTIVE`** — the handler accepted the terms.
+
+### 9b — Probe that fails (structural condition absent)
+
+```bash
+PROBE_FAIL=$(curl -s -X POST http://localhost:8000/tmf-api/intentManagement/v5/intent \
+  -H "Content-Type: application/json" \
+  -d "{
+    \"@type\": \"ProbeIntent\",
+    \"name\": \"HSI Capability Probe — fail\",
+    \"intentRelationship\": [{
+      \"@type\": \"IntentRelationship\",
+      \"id\": \"$INTENT_ID\",
+      \"relationshipType\": \"relatesTo\",
+      \"referredType\": \"Intent\"
+    }],
+    \"expression\": {
+      \"@type\": \"TurtleExpression\",
+      \"iri\": \"http://broadband-forum.org/Intent#ProbeFail\",
+      \"expressionValue\": \"@prefix bbf: <http://broadband-forum.org/Intent#> .\\n@prefix log: <http://tio.models.tmforum.org/tio/v3.6.0/LogicalOperators/> .\\n\\nbbf:ProbeCheck log:allOf ( bbf:UNICheck ) .\\nbbf:UNICheck log:match ( bbf:SelectedUNI bbf:operationalState bbf:Shutdown ) .\\n\"
+    }
+  }")
+
+PROBE_FAIL_ID=$(echo "$PROBE_FAIL" | python3 -c "import sys,json; print(json.load(sys.stdin)['id'])")
+echo "ProbeIntent ID: $PROBE_FAIL_ID"
+
+sleep 1
+curl -s "http://localhost:8000/tmf-api/intentManagement/v5/intent/$PROBE_FAIL_ID" \
+  | python3 -c "import sys,json; d=json.load(sys.stdin); print('Status:', d['lifecycleStatus'])"
+```
+
+Expected: **`TERMINATED`** — the required triple (`bbf:Shutdown`) was not found in the expression graph.
+
+---
+
+## Step 10 — Flow 3: Best/Propose (handler proposes achievable bounds)
+
+When an intent's `TurtleExpression` evaluates as Degraded, the handler automatically:
+1. Substitutes best-effort bound values into the failed conditions' `expressionValue`
+2. PATCHes the intent with the updated expression and fires `intentAttributeValueChangeEvent`
+3. Waits for the owner to inspect and approve by PATCHing `lifecycleStatus: ACTIVE`
+
+The best-effort bound comes from the **observed value** in the last evaluation cycle
+(primary), falling back to **`HANDLER_LIMITS_JSON`** if no observation exists.
+
+### 10a — Set operator limits (optional fallback)
+
+To demonstrate the limits fallback, set `HANDLER_LIMITS_JSON` before starting the API.
+With Docker Compose, add it to the `app` service environment in `docker-compose.yml`:
+
+```yaml
+environment:
+  HANDLER_LIMITS_JSON: '{"quanatLeast": 80.0, "quansmaller": 30.0}'
+```
+
+Or export it before starting the local dev server:
+
+```bash
+export HANDLER_LIMITS_JSON='{"quanatLeast": 80.0, "quansmaller": 30.0}'
+.venv/bin/uvicorn src.main:app --reload
+```
+
+### 10b — Create an intent with unreachable bounds
+
+Post an intent whose bounds cannot be met by any observation. Then submit an
+observation so the evaluator knows the actual measured value.
+
+```bash
+STRICT=$(curl -s -X POST http://localhost:8000/tmf-api/intentManagement/v5/intent \
+  -H "Content-Type: application/json" \
+  -d '{
+    "@type": "Intent",
+    "name": "HSI Flow3 Demo — strict bounds",
+    "expression": {
+      "@type": "TurtleExpression",
+      "iri": "http://broadband-forum.org/Intent#StrictBW",
+      "expressionValue": "@prefix bbf: <http://broadband-forum.org/Intent#> .\n@prefix quan: <http://tio.models.tmforum.org/tio/v3.6.0/QuantityOntology/> .\n@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .\n@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .\n\nbbf:DL_Check a quan:quanatLeast ;\n    rdf:first bbf:DownstreamBandwidthMetric ;\n    rdf:rest  [ rdf:first bbf:DL_Bound ] .\nbbf:DL_Bound rdf:value \"500\"^^xsd:decimal .\n"
+    }
+  }')
+
+echo "$STRICT" | python3 -m json.tool
+STRICT_ID=$(echo "$STRICT" | python3 -c "import sys,json; print(json.load(sys.stdin)['id'])")
+echo "Strict intent ID: $STRICT_ID"
+```
+
+### 10c — Submit an observation to trigger evaluation
+
+```bash
+BASE2="http://localhost:8000/tmf-api/intentManagement/v5/intent/$STRICT_ID/observation"
+BBF="http://broadband-forum.org/Intent#"
+
+# System can only deliver 150 Mbps — well below the 500 Mbps bound
+curl -s -X POST "$BASE2" -H "Content-Type: application/json" \
+  -d "{\"metricUri\": \"${BBF}DownstreamBandwidthMetric\", \"value\": 150.0}"
+
+sleep 2
+```
+
+### 10d — Inspect the handler's best-effort proposal
+
+The handler evaluated `150 ≥ 500 → Degraded`, then substituted `observed=150` as the
+new bound and PATCHed the intent's expression:
+
+```bash
+curl -s "http://localhost:8000/tmf-api/intentManagement/v5/intent/$STRICT_ID" \
+  | python3 -c "
+import sys, json
+d = json.load(sys.stdin)
+expr = d.get('expression', {}).get('expressionValue', '')
+print('lifecycleStatus:', d.get('lifecycleStatus'))
+print()
+print('Updated expressionValue (look for 150 replacing 500):')
+print(expr[:600])
+"
+```
+
+The `expressionValue` now contains `rdf:value "150"^^xsd:decimal` in place of `"500"`.
+The intent remains in `ACKNOWLEDGED` state — the handler waits for the owner to accept.
+
+### 10e — Owner approves the proposal
+
+```bash
+curl -s -X PATCH \
+  "http://localhost:8000/tmf-api/intentManagement/v5/intent/$STRICT_ID" \
+  -H "Content-Type: application/merge-patch+json" \
+  -d '{"lifecycleStatus": "ACTIVE"}' \
+  | python3 -c "import sys,json; d=json.load(sys.stdin); print('Status:', d['lifecycleStatus'])"
+```
+
+Expected: **`ACTIVE`** — the owner has accepted the best-effort terms. The next
+evaluation cycle will confirm the bound is now achievable and produce a `Fulfilled` report.
+
+---
+
 ## What to look at in the code
 
 | Location | What it does |
@@ -424,4 +605,7 @@ or until the intent handler receives external notification of provisioning compl
 | `src/handler/state_writer.py:build_handler_state_turtle()` | Serialises per-condition results to RDF |
 | `src/handler/observation_store.py:write_observation()` | Appends a `met:Observation` to the observation graph |
 | `src/handler/dispatcher.py:dispatch_evaluation()` | Orchestrates evaluate → write state → create report → notify |
+| `src/handler/dispatcher.py:_try_probe_transition()` | Flow 1: auto-transitions ProbeIntent to ACTIVE or TERMINATED |
+| `src/handler/dispatcher.py:_try_best_propose()` | Flow 3: substitutes best-effort bounds, PATCHes expressionValue |
+| `src/handler/limits.py:apply_best_effort_bounds()` | Parses Turtle, finds failed quantity nodes, updates bound rdf:value |
 | `src/api/routers/observation.py` | `POST /intent/{id}/observation` endpoint |

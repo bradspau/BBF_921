@@ -50,6 +50,7 @@ cp env.template .env
 | `EVAL_TIMEOUT_SECONDS` | `30` | Max wall time for a single evaluation cycle before returning Degraded |
 | `EVAL_MAX_TURTLE_BYTES` | `524288` | Maximum `expressionValue` size in bytes (512 KB) |
 | `MAX_OBS_PER_METRIC` | `10` | Max observations retained per metric per intent |
+| `HANDLER_LIMITS_JSON` | `{}` | JSON object of operator-declared capacity limits used by Flow 3 (Best/Propose) as fallback bounds when no observed value is available. Keys are TIO condition type short names; values are numeric. Example: `'{"quanatLeast": 120.0, "quansmaller": 20.0}'` |
 
 Pass them on the command line or export from `.env` before starting the server.
 
@@ -146,6 +147,46 @@ Valid PATCH transitions are enforced server-side. See `docs/04-state-machine.md`
 
 ---
 
+## Negotiation Flows
+
+The handler dispatcher implements all three TMF921A §4.2 negotiation flows automatically as background tasks after each evaluation. No special endpoints are required — all interactions use standard `POST /intent` and `PATCH /intent/{id}`.
+
+### Flow 1 — ProbeIntent (capability probe)
+
+The owner asks "can you satisfy these terms?" by creating a `ProbeIntent` that references the parent via `intentRelationship`. The handler evaluates the ProbeIntent's expression and auto-transitions it:
+
+- **Fulfilled → `ACTIVE`** — the handler can satisfy the expressed terms
+- **Degraded → `TERMINATED`** — the handler cannot satisfy the terms
+
+```
+1. Owner   POST /intent  (@type: ProbeIntent, intentRelationship → parent id)
+2. Handler evaluates expression → PATCH lifecycleStatus ACTIVE or TERMINATED
+3. Owner   reads result via GET /intent/{probeId} or intentStatusChangeEvent
+```
+
+### Flow 2 — Judge/Preference (owner adjusts degraded intent)
+
+When conditions degrade and the owner patches new preference values, the handler re-evaluates and auto-transitions back to `ACTIVE` if the revised expression passes. See `docs/06-negotiation.md`.
+
+### Flow 3 — Best/Propose (handler proposes achievable bounds)
+
+When a `TurtleExpression` intent evaluates as `Degraded`, the handler substitutes best-effort bound values into the expression and patches the intent, then waits for owner approval:
+
+```
+1. Owner   POST /intent  (TurtleExpression with strict bounds)
+2. Handler evaluates → Degraded → PATCH expressionValue with best-effort bounds
+           fires intentAttributeValueChangeEvent
+3. Owner   inspects updated expression → PATCH lifecycleStatus ACTIVE to approve
+```
+
+Best-effort bound selection priority:
+1. **Observed value** from the last evaluation cycle (what the system actually measured)
+2. **`HANDLER_LIMITS_JSON`** operator-declared capacity (fallback when no observation)
+
+Flow 3 only applies to `TurtleExpression` intents — `JsonLdExpression` content is opaque and cannot be programmatically mutated.
+
+---
+
 ## Event Types
 
 The API publishes 10 event types to registered hub callbacks:
@@ -176,10 +217,11 @@ flowchart TD
     end
 
     subgraph hdl["Handler Layer  ·  OODA loop"]
-        D["Dispatcher\nbackground asyncio task"]
+        D["Dispatcher\nFlow 1 ProbeIntent · Flow 2 Judge/Pref · Flow 3 Best/Propose\nbackground asyncio task"]
         E["Evaluator\nTIO expression eval\nRDFLib · thread executor"]
         SW["StateWriter\nOODA working memory"]
         OS["ObservationStore\nprune on write"]
+        LM["Limits\nHANDLER_LIMITS_JSON\nbest-effort bound fallback"]
     end
 
     subgraph repo["Repository Layer"]
@@ -203,6 +245,8 @@ flowchart TD
     NS -->|"POST callback"| Hub
     D -->|"asyncio.wait_for + timeout"| E
     E -->|"evaluate_turtle_conditions"| SW
+    D -->|"Flow 3 bound substitution"| LM
+    LM -->|"apply_best_effort_bounds"| D
     SW --> RR & NS
     OS --> FC
     IR & RR & SR & HR --> FC
@@ -251,6 +295,14 @@ observations Turtle        ──┘                         │
                                     IntentReport ──► Fuseki
                                           │
                                     NotificationService ──► hub callbacks
+                                          │
+                            ┌─────────────┴──────────────┐
+                       Fulfilled                      Degraded
+                            │                             │
+               Flow 1 ProbeIntent → ACTIVE    Flow 1 ProbeIntent → TERMINATED
+               Flow 2 Judge/Pref  → ACTIVE    Flow 3 Best/Propose → PATCH expressionValue
+                                                          │
+                                              Limits (HANDLER_LIMITS_JSON fallback)
 ```
 
 ---
@@ -277,4 +329,4 @@ ruff check src/
 - **Single Fuseki dataset.** The API is scoped to one dataset (`tmf921`). Multi-tenancy is not supported.
 - **Schema init not called at startup.** `schema_init.py` (`ensure_dataset` + `load_ontology`) is not invoked from the FastAPI lifespan. The Docker Compose setup pre-creates the dataset via `FUSEKI_DATASET_1`; the ontology TTL files are not loaded automatically in the container.
 - **No pagination link headers.** Pagination is cursor-based (`offset`/`limit`) but `Link` headers (RFC 5988) are not emitted — only `X-Total-Count` and `X-Result-Count`.
-- **`expressionValue` is opaque.** The API stores and returns `expressionValue` as a plain string literal. The intent handler loads it into a temporary evaluation graph for reasoning, but the ontology inference is a PoC stub.
+- **`expressionValue` mutation limited to two-argument quantity conditions.** Flow 3 (Best/Propose) updates `rdf:value` literals on `quan:quanat*` / `quan:at*` bound nodes. Complex expressions using set operators, math functions, or validity chains are stored back as-is; only the quantity bounds are substituted. `JsonLdExpression` content is never modified.
