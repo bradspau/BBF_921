@@ -61,11 +61,16 @@ ontology/
 
 ## Quick Start — Docker Compose
 
+Three startup modes are available depending on what you want to run.
+
+### Default (single domain)
+
+The original single-domain setup — no profile required.
+
 ```bash
-# Start Fuseki and the API
 docker compose up --build
 
-# In a second terminal, seed sample data
+# Seed sample data
 python seed_data/seed_intents.py
 
 # Verify
@@ -73,7 +78,51 @@ curl http://localhost:8000/health
 curl http://localhost:8000/tmf-api/intentManagement/v5/intent
 ```
 
-The Fuseki admin console is available at http://localhost:3030 (user: `admin`, password: `admin`).
+### Access Domain (BBF PON resource demo)
+
+Starts the access domain on port **8001**. At startup the server loads the PON
+resource inventory (`BBF_access/pon_resource_onto.ttl` +
+`BBF_access/pon_resource_data.ttl`) into Fuseki so that intent expressions can
+select UNI resources using `set:resourcesOfType` / `set:resourcesWithPropertyObject`.
+
+```bash
+docker compose --profile access up --build
+
+# Seed the HSI intent
+python seed_data/seed_access.py --base-url http://localhost:8001
+
+# Verify
+curl http://localhost:8001/health
+```
+
+### Aggregation Domain
+
+Starts the aggregation domain on port **8000**. This domain acts as an intent
+owner, posting ProbeIntents and Intents to the access domain via the
+TMF921 F-interface.
+
+```bash
+docker compose --profile aggregation up --build
+
+# Verify
+curl http://localhost:8000/health
+```
+
+### Both Domains (F-interface demo)
+
+Runs Fuseki, access domain (:8001), and aggregation domain (:8000) together.
+Each domain uses its own Fuseki dataset (`tmf921-access` / `tmf921-agg`).
+
+```bash
+docker compose --profile access --profile aggregation up --build
+
+# Run the full F-interface demo (ProbeIntent + HSI intent)
+python seed_data/seed_aggregation.py \
+    --agg-url  http://localhost:8000 \
+    --access-url http://localhost:8001
+```
+
+The Fuseki admin console is available at http://localhost:3030 (user: `admin`, password: `admin`) for all startup modes.
 
 ---
 
@@ -99,6 +148,7 @@ cp env.template .env
 | `EVAL_MAX_TURTLE_BYTES` | `524288` | Maximum `expressionValue` size in bytes (512 KB) |
 | `MAX_OBS_PER_METRIC` | `10` | Max observations retained per metric per intent |
 | `HANDLER_LIMITS_JSON` | `{}` | JSON object of operator-declared capacity limits used by Flow 3 (Best/Propose) as fallback bounds when no observed value is available. Keys are TIO condition type short names; values are numeric. Example: `'{"quanatLeast": 120.0, "quansmaller": 20.0}'` |
+| `RESOURCE_DATA_DIR` | *(unset)* | Path to a directory of `.ttl` files loaded into the `…/resources` named graph at startup. Used by the access domain to load PON resource inventory (`BBF_access`). When unset no resource data is loaded and the resources graph remains empty. |
 
 Pass them on the command line or export from `.env` before starting the server.
 
@@ -114,11 +164,23 @@ pip install -r requirements-dev.txt
 # Start Fuseki only (graph store runs in Docker, app runs on host)
 docker compose up fuseki -d
 
-# Wait for Fuseki to be healthy, then start the API
+# Wait for Fuseki to be healthy, then start the API (default mode)
 uvicorn src.main:app --reload
 
-# Seed sample data
-python seed_data/seed_intents.py
+# Access domain — load PON resource inventory at startup
+FUSEKI_DATASET=tmf921-access RESOURCE_DATA_DIR=BBF_access \
+    uvicorn src.main:app --port 8001 --reload
+
+# Aggregation domain
+FUSEKI_DATASET=tmf921-agg \
+    uvicorn src.main:app --port 8000 --reload
+
+# Seed scripts
+python seed_data/seed_intents.py                          # default domain
+python seed_data/seed_access.py --base-url http://localhost:8001
+python seed_data/seed_aggregation.py \
+    --agg-url http://localhost:8000 \
+    --access-url http://localhost:8001
 ```
 
 ---
