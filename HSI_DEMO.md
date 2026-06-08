@@ -535,32 +535,43 @@ then click **Run query**.
 
 ## Using the seed scripts
 
+| Script | Startup mode | What it seeds |
+|---|---|---|
+| `seed_intents.py` | Default (`docker compose up`) | 4 generic sample intents + 1 IntentSpec |
+| `seed_access.py` | Access profile (`--profile access`) | BBF HSI intent from `hsionlyintent_v0.5.ttl` against PON resource inventory |
+| `seed_aggregation.py` | Both profiles | F-interface ProbeIntent → full HSI intent flow |
+
 ### Default domain
 
-Seeds five sample intents including the BBF HSI intent:
+Seeds four generic sample intents and one IntentSpecification:
 
 ```bash
 python seed_data/seed_intents.py
 ```
 
+The HSI intent is **not** included here — it requires the PON resource inventory
+which is only loaded in the access domain profile.
+
 ### Access domain seed
 
-Seeds the HSI intent to the access domain. The access domain must be running with
-`RESOURCE_DATA_DIR=BBF_access` (i.e. started with `--profile access`) so the PON
-resource inventory is already loaded before the intent is evaluated:
+Seeds the BBF HSI intent to the access domain. The access domain must already be
+running (`--profile access`) so the PON resource inventory is loaded before the
+intent is evaluated:
 
 ```bash
 python seed_data/seed_access.py --base-url http://localhost:8001
 ```
 
-This posts the intent from `seed_data/hsionlyintent_v0.5.ttl`. The set constructors
-(`set:resourcesOfType pon:UNIPort`, `set:resourcesWithPropertyObject`) will resolve
-against the loaded UNI/ONT/OLT inventory. Submit observations using the metric URIs
-in Step 3 (substituting port **8001**) to drive the performance conditions.
+Posts the intent from `seed_data/hsionlyintent_v0.5.ttl`. The set constructors
+(`set:resourcesOfType pon:UNIPort`, `set:resourcesWithPropertyObject`) resolve
+against the UNI/ONT/OLT instances loaded at startup from `BBF_access/`. Submit
+observations using the metric URIs from Step 3 (substituting port **8001**) to
+drive the performance conditions.
 
 ### F-interface demo seed
 
-Runs the full aggregation → access ProbeIntent flow automatically:
+Runs the full aggregation → access ProbeIntent flow automatically. Both domains
+must be running:
 
 ```bash
 python seed_data/seed_aggregation.py \
