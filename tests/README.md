@@ -1,6 +1,6 @@
 # Test Suite
 
-793 tests across three suites. No running Fuseki instance required — all Fuseki HTTP calls are mocked with `respx`.
+798 tests across three suites. No running Fuseki instance required — all Fuseki HTTP calls are mocked with `respx`.
 
 ## Prerequisites
 
