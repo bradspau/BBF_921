@@ -8,6 +8,54 @@ A implementation of the TM Forum TMF921 Intent Management API built with **Pytho
 
 - Docker + Docker Compose **or** Python 3.12 + a running Fuseki instance
 - `uv` (optional but recommended for local development)
+- TIO ontology TTL files in `ontology/` (see below)
+
+---
+
+## Ontology Files
+
+The `ontology/` directory is **not included in this repository** — the TIO v3.6.0
+ontology TTL files must be supplied by the user before starting the server.
+
+At startup the application calls `load_ontology()` which reads every `.ttl` file
+from `ontology/` and loads them into the `http://tmforum.org/api/v5/ontology` named
+graph in Fuseki. If the directory is absent or empty a warning is logged and startup
+continues — the API and evaluation pipeline work without them, but the ontology named
+graph in Fuseki will be empty.
+
+**Where to obtain the files:**
+
+Download the TMF921 Intent Management API specification package from the
+[TM Forum Open API Table](https://www.tmforum.org/oda/open-apis/table). The ZIP
+contains the TIO v3.6.0 ontology TTL files. Extract them into the `ontology/`
+directory at the project root.
+
+**Expected files** (TIO v3.6.0):
+
+```
+ontology/
+  FunctionOntology.ttl
+  IntentCommonModel.ttl
+  IntentGuaranteeOntology.ttl
+  IntentManagementOntology.ttl
+  IntentProbing.ttl
+  IntentSpecification.ttl
+  IntentValidityOntology.ttl
+  LogicalOperators.ttl
+  MathFunctions.ttl
+  MetricsAndObservations.ttl
+  PreferenceOfHandlingOutcomes.ttl
+  ProposalBestIntent.ttl
+  QuantityOntology.ttl
+  SetOperators.ttl
+  Utility.ttl
+  intent.ttl
+```
+
+> **Note:** The evaluation pipeline uses hardcoded Python namespace URIs — it does
+> not query the ontology named graph at runtime. The TTL files are stored in Fuseki
+> for reference and SPARQL tooling only. Evaluation works correctly whether or not
+> the files are present.
 
 ---
 
@@ -370,6 +418,6 @@ ruff check src/
 - **No TLS.** The local and Docker Compose setup uses plain HTTP. Terminate TLS at the reverse proxy in production.
 - **Fire-and-forget notifications.** Event fan-out to hub callbacks is attempted once; failures are logged and silently dropped. There is no retry queue or dead-letter mechanism.
 - **Single Fuseki dataset.** The API is scoped to one dataset (`tmf921`). Multi-tenancy is not supported.
-- **Schema init not called at startup.** `schema_init.py` (`ensure_dataset` + `load_ontology`) is not invoked from the FastAPI lifespan. The Docker Compose setup pre-creates the dataset via `FUSEKI_DATASET_1`; the ontology TTL files are not loaded automatically in the container.
+- **Ontology load is best-effort.** `schema_init.py` (`ensure_dataset` + `load_ontology`) is called from the FastAPI lifespan but errors are caught and logged as warnings — if Fuseki is not reachable at startup, or the `ontology/` directory is absent, the server starts anyway. The Docker Compose setup pre-creates the dataset via `FUSEKI_DATASET_1`; place TTL files in `ontology/` before starting if you want the ontology named graph populated.
 - **No pagination link headers.** Pagination is cursor-based (`offset`/`limit`) but `Link` headers (RFC 5988) are not emitted — only `X-Total-Count` and `X-Result-Count`.
 - **`expressionValue` mutation limited to two-argument quantity conditions.** Flow 3 (Best/Propose) updates `rdf:value` literals on `quan:quanat*` / `quan:at*` bound nodes. Complex expressions using set operators, math functions, or validity chains are stored back as-is; only the quantity bounds are substituted. `JsonLdExpression` content is never modified.
