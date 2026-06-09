@@ -4411,3 +4411,119 @@ bbf:Met  rdf:value "20"^^xsd:decimal .
         result = evaluate_turtle_conditions(turtle)
         assert result["intentHandlingState"] == "Fulfilled"
         assert len(result["conditions"]) == 1
+
+
+class TestNormalizeSetPredicates:
+    """Tests for _normalize_set_predicates — predicate-form set constructors."""
+
+    def test_resources_of_type_materialises_members(self):
+        """set:resourcesOfType as predicate populates target rdfs:member."""
+        turtle = """\
+@prefix ex:  <http://example.org/> .
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix set:  <http://tio.models.tmforum.org/tio/v3.6.0/SetOperators/> .
+@prefix icm:  <http://tio.models.tmforum.org/tio/v3.6.0/IntentCommonModel/> .
+@prefix log:  <http://tio.models.tmforum.org/tio/v3.6.0/LogicalOperators/> .
+@prefix xsd:  <http://www.w3.org/2001/XMLSchema#> .
+
+ex:Pool  a icm:Target ;
+    set:resourcesOfType ex:Widget .
+
+ex:W1  a ex:Widget .
+ex:W2  a ex:Widget .
+ex:NotAWidget  a ex:Gadget .
+
+ex:Delivery  a icm:DeliveryExpectation ;
+    icm:target     ex:Selected ;
+    icm:deliveryType ex:Widget ;
+    icm:chooseFrom ex:Pool .
+"""
+        result = evaluate_turtle_conditions(turtle)
+        conds = result["conditions"]
+        delivery = next(c for c in conds if c.get("type") == "DeliveryExpectation")
+        assert delivery["passed"] is True
+        assert delivery["candidates"] == 2
+
+    def test_resources_with_property_object_filters(self):
+        """set:resourcesWithPropertyObject as predicate filters by prop=obj."""
+        turtle = """\
+@prefix ex:  <http://example.org/> .
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix set:  <http://tio.models.tmforum.org/tio/v3.6.0/SetOperators/> .
+@prefix icm:  <http://tio.models.tmforum.org/tio/v3.6.0/IntentCommonModel/> .
+@prefix xsd:  <http://www.w3.org/2001/XMLSchema#> .
+
+ex:Pool  a icm:Target ;
+    set:resourcesOfType              ex:Port ;
+    set:resourcesWithPropertyObject ( ex:inUse false ) .
+
+ex:P1  a ex:Port ; ex:inUse false .
+ex:P2  a ex:Port ; ex:inUse true .
+ex:P3  a ex:Port ; ex:inUse false .
+
+ex:Delivery  a icm:DeliveryExpectation ;
+    icm:target     ex:Selected ;
+    icm:deliveryType ex:Port ;
+    icm:chooseFrom ex:Pool .
+"""
+        result = evaluate_turtle_conditions(turtle)
+        delivery = next(c for c in result["conditions"] if c.get("type") == "DeliveryExpectation")
+        assert delivery["passed"] is True
+        assert delivery["candidates"] == 2  # P1 and P3 only
+
+    def test_multiple_property_filters_intersected(self):
+        """Multiple resourcesWithPropertyObject predicates AND together."""
+        turtle = """\
+@prefix ex:  <http://example.org/> .
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix set:  <http://tio.models.tmforum.org/tio/v3.6.0/SetOperators/> .
+@prefix icm:  <http://tio.models.tmforum.org/tio/v3.6.0/IntentCommonModel/> .
+@prefix xsd:  <http://www.w3.org/2001/XMLSchema#> .
+
+ex:Pool  a icm:Target ;
+    set:resourcesOfType              ex:Port ;
+    set:resourcesWithPropertyObject ( ex:inUse  false ) ;
+    set:resourcesWithPropertyObject ( ex:status ex:Up ) .
+
+ex:P1  a ex:Port ; ex:inUse false ; ex:status ex:Up .
+ex:P2  a ex:Port ; ex:inUse false ; ex:status ex:Down .
+ex:P3  a ex:Port ; ex:inUse true  ; ex:status ex:Up .
+
+ex:Delivery  a icm:DeliveryExpectation ;
+    icm:target     ex:Selected ;
+    icm:deliveryType ex:Port ;
+    icm:chooseFrom ex:Pool .
+"""
+        result = evaluate_turtle_conditions(turtle)
+        delivery = next(c for c in result["conditions"] if c.get("type") == "DeliveryExpectation")
+        assert delivery["passed"] is True
+        assert delivery["candidates"] == 1  # only P1 passes both filters
+
+    def test_empty_pool_delivery_fails(self):
+        """No candidates → DeliveryExpectation fails even with chooseFrom."""
+        turtle = """\
+@prefix ex:  <http://example.org/> .
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix set:  <http://tio.models.tmforum.org/tio/v3.6.0/SetOperators/> .
+@prefix icm:  <http://tio.models.tmforum.org/tio/v3.6.0/IntentCommonModel/> .
+@prefix xsd:  <http://www.w3.org/2001/XMLSchema#> .
+
+ex:Pool  a icm:Target ;
+    set:resourcesOfType              ex:Port ;
+    set:resourcesWithPropertyObject ( ex:inUse false ) .
+
+ex:P1  a ex:Port ; ex:inUse true .
+
+ex:Delivery  a icm:DeliveryExpectation ;
+    icm:target     ex:Selected ;
+    icm:deliveryType ex:Port ;
+    icm:chooseFrom ex:Pool .
+"""
+        result = evaluate_turtle_conditions(turtle)
+        delivery = next(c for c in result["conditions"] if c.get("type") == "DeliveryExpectation")
+        assert delivery["passed"] is False
+        assert delivery["candidates"] == 0

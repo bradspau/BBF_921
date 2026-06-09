@@ -503,6 +503,51 @@ def _normalize_qty_predicates(g: rdflib.Graph) -> None:
                 g.add((cond, RDF.rest, rest))
 
 
+def _normalize_set_predicates(g: rdflib.Graph) -> None:
+    """
+    Normalise predicate-form set constructors to rdfs:member triples.
+
+    TIO canonical usage applies the constructor URI as a predicate:
+        ?target  set:resourcesOfType              ?class .
+        ?target  set:resourcesWithPropertyObject  ( prop obj ) .
+
+    _compute_set_constructors expects typed blank nodes (type-form).  This
+    normaliser skips that intermediate form and materialises rdfs:member
+    directly on each target by chaining the filters as AND conditions:
+
+      1. Start with every resource typed as any class in resourcesOfType.
+      2. Intersect with each resourcesWithPropertyObject ( prop obj ) filter.
+      3. Add target rdfs:member ?resource for each surviving resource.
+
+    Idempotent — skips targets that already have rdfs:member triples.
+    """
+    targets = set(g.subjects(_SET.resourcesOfType, None)) | set(
+        g.subjects(_SET.resourcesWithPropertyObject, None)
+    )
+    for target in targets:
+        if list(g.objects(target, RDFS.member)):
+            continue  # already materialised
+        type_classes = list(g.objects(target, _SET.resourcesOfType))
+        if type_classes:
+            members: set | None = set()
+            for cls in type_classes:
+                members |= set(g.subjects(RDF.type, cls))
+        else:
+            members = None  # no type filter — refined by property filters
+        for list_node in g.objects(target, _SET.resourcesWithPropertyObject):
+            args = list(_iter_rdf_list(g, list_node))
+            if len(args) < 2:
+                continue
+            prop = args[0]
+            filter_set: set = set()
+            for obj in args[1:]:
+                filter_set |= set(g.subjects(prop, obj))
+            members = filter_set if members is None else members & filter_set
+        if members:
+            for m in members:
+                g.add((target, RDFS.member, m))
+
+
 def _resolve_metric_refs(g: rdflib.Graph) -> None:
     """
     Inject rdf:value on metric/function nodes so quantity comparators can fire.
@@ -1148,16 +1193,27 @@ def _eval_delivery_expectation(g: rdflib.Graph, node: rdflib.term.Node) -> tuple
                         "error": "missing icm:deliveryType", "passed": False}]
 
     members = list(g.objects(target, RDFS.member))
-    if not members:
-        return False, [{"type": "DeliveryExpectation",
-                        "deliveryType": str(delivery_type),
-                        "error": "empty target container", "passed": False}]
+    if members:
+        passed = any((m, RDF.type, delivery_type) in g for m in members)
+        return passed, [{"type": "DeliveryExpectation",
+                         "deliveryType": str(delivery_type),
+                         "member_count": len(members),
+                         "passed": passed}]
 
-    passed = any((m, RDF.type, delivery_type) in g for m in members)
-    return passed, [{"type": "DeliveryExpectation",
-                     "deliveryType": str(delivery_type),
-                     "member_count": len(members),
-                     "passed": passed}]
+    # Target not yet populated — check icm:chooseFrom for available candidates.
+    # Passes if the resource pool has ≥1 candidate (handler will select one).
+    choose_from = g.value(node, _ICM.chooseFrom)
+    if choose_from is not None:
+        candidates = list(g.objects(choose_from, RDFS.member))
+        passed = len(candidates) > 0
+        return passed, [{"type": "DeliveryExpectation",
+                         "deliveryType": str(delivery_type),
+                         "candidates": len(candidates),
+                         "passed": passed}]
+
+    return False, [{"type": "DeliveryExpectation",
+                    "deliveryType": str(delivery_type),
+                    "error": "empty target container", "passed": False}]
 
 
 def _eval_property_expectation(g: rdflib.Graph, node: rdflib.term.Node) -> tuple[bool, list[dict]]:
@@ -1711,6 +1767,7 @@ def evaluate_turtle_conditions(turtle_str: str) -> dict:
         return {"intentHandlingState": "Degraded", "reason": f"Turtle parse error: {exc}", "conditions": []}
 
     _normalize_qty_predicates(g)
+    _normalize_set_predicates(g)
     _resolve_metric_refs(g)
     _compute_math_functions(g)
     _compute_set_constructors(g)
