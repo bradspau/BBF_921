@@ -762,8 +762,11 @@ def _eval_two_arg(
         return {"type": type_name, "operator": sym, "error": "missing operand nodes", "passed": False}
     obs_lit = g.value(val_node, RDF.value)
     bnd_lit = g.value(bnd_node, RDF.value)
-    if obs_lit is None or bnd_lit is None:
-        return {"type": type_name, "operator": sym, "error": "missing rdf:value", "passed": False}
+    if obs_lit is None:
+        metric_name = str(val_node).rsplit("#", 1)[-1].rsplit("/", 1)[-1]
+        return {"type": type_name, "operator": sym, "error": f"no observation: {metric_name}", "passed": False}
+    if bnd_lit is None:
+        return {"type": type_name, "operator": sym, "error": "missing bound value", "passed": False}
     try:
         obs = Decimal(str(obs_lit))
         bnd = Decimal(str(bnd_lit))

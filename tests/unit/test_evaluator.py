@@ -416,7 +416,7 @@ class TestEvaluateTurtleConditions:
         assert result["intentHandlingState"] == "Degraded"
         c = result["conditions"][0]
         assert c["passed"] is False
-        assert c["error"] == "missing rdf:value"
+        assert c["error"].startswith("no observation:")
 
     def test_two_arg_non_numeric_value_degraded(self):
         """quanatLeast with a non-numeric literal → InvalidOperation error."""
@@ -691,7 +691,7 @@ class TestMetricResolution:
         assert result["intentHandlingState"] == "Fulfilled"
 
     def test_pattern_a_no_observation_gives_missing_rdf_value(self):
-        """Pattern A: metric node with no observation → missing rdf:value error."""
+        """Pattern A: metric node with no observation → no observation error with metric name."""
         turtle = (
             _MET_PREFIXES
             + "<urn:test:cond> a quan:quanatLeast ;\n"
@@ -701,7 +701,7 @@ class TestMetricResolution:
         )
         result = evaluate_turtle_conditions(turtle)
         assert result["intentHandlingState"] == "Degraded"
-        assert result["conditions"][0]["error"] == "missing rdf:value"
+        assert result["conditions"][0]["error"].startswith("no observation:")
 
     def test_pattern_b_metlastvalue_resolved(self):
         """Pattern B: met:metlastValue function node resolved via observation."""
@@ -772,7 +772,7 @@ class TestMetricResolution:
         )
         result = evaluate_turtle_conditions(turtle)
         assert result["intentHandlingState"] == "Degraded"
-        assert "missing rdf:value" in result["conditions"][0].get("error", "")
+        assert "no observation" in result["conditions"][0].get("error", "")
 
     def test_observation_without_rdf_value_skipped(self):
         """Observation matches metric but has no rdf:value → skipped (line 435 continue)."""
