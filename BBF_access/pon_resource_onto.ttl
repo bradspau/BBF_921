@@ -27,12 +27,7 @@
 <http://broadband-forum.org/ont/pon-resource>
     a owl:Ontology ;
     dcterms:title "BBF PON Resource Ontology" ;
-    dcterms:description
-        "Models the physical and logical resources of a GPON/XGS-PON access network "
-        "following the containment chain: OLT → PON Port (Channel Termination) → "
-        "ONT (ONU) → UNI Port → SVLAN/CVLAN service allocation. "
-        "Aligned to the IETF IVY network-inventory YANG model "
-        "(draft-ietf-ivy-network-inventory-yang-18)." ;
+    dcterms:description "Models the physical and logical resources of a GPON/XGS-PON access network following the containment chain: OLT → PON Port (Channel Termination) → ONT (ONU) → UNI Port → SVLAN/CVLAN service allocation. Aligned to the IETF IVY network-inventory YANG model (draft-ietf-ivy-network-inventory-yang-18)." ;
     dcterms:references
         <https://datatracker.ietf.org/doc/draft-ietf-ivy-network-inventory-yang/> ,
         <https://datatracker.ietf.org/doc/draft-ietf-ivy-network-inventory-location/> ;
@@ -49,28 +44,21 @@
 pon:NetworkElement a owl:Class ;
     rdfs:label "Network Element" ;
     rdfs:comment
-        "Base class for managed network devices. "
-        "Aligns to nwi:network-element in IETF IVY." ;
+        "Base class for managed network devices. Aligns to nwi:network-element in IETF IVY." ;
     skos:exactMatch nwi:network-element .
 
 pon:OLT a owl:Class ;
     rdfs:subClassOf pon:NetworkElement ;
     rdfs:label "Optical Line Terminal" ;
     rdfs:comment
-        "Central-office equipment that aggregates PON ports and connects "
-        "to the aggregation network via uplink ports. "
-        "IVY ne-type: nwi:ne-physical. "
-        "BBF TR-385: Optical Line Termination." ;
+        "Central-office equipment that aggregates PON ports and connects to the aggregation network via uplink ports. IVY ne-type: nwi:ne-physical. BBF TR-385: Optical Line Termination." ;
     skos:exactMatch nwi:ne-physical .
 
 pon:ONT a owl:Class ;
     rdfs:subClassOf pon:NetworkElement ;
     rdfs:label "Optical Network Terminal" ;
     rdfs:comment
-        "Customer-premises equipment on the subscriber end of a PON fibre. "
-        "Also referred to as ONU (Optical Network Unit) in ITU-T G.984/G.987/G.9807. "
-        "IVY ne-type: nwi:ne-physical. "
-        "BBF TR-385: ONU (Optical Network Unit)." ;
+        "Customer-premises equipment on the subscriber end of a PON fibre. Also referred to as ONU (Optical Network Unit) in ITU-T G.984/G.987/G.9807. IVY ne-type: nwi:ne-physical. BBF TR-385: ONU (Optical Network Unit)." ;
     skos:exactMatch nwi:ne-physical .
 
 
@@ -85,43 +73,32 @@ pon:ONT a owl:Class ;
 pon:PortComponent a owl:Class ;
     rdfs:label "Port Component" ;
     rdfs:comment
-        "Base class for port-type components within a network element. "
-        "IVY class: ianahw:port." ;
+        "Base class for port-type components within a network element. IVY class: ianahw:port." ;
     skos:exactMatch ianahw:port .
 
 pon:PONPort a owl:Class ;
     rdfs:subClassOf pon:PortComponent ;
     rdfs:label "PON Port (Channel Termination)" ;
     rdfs:comment
-        "Downlink PON port on an OLT that serves a fibre split towards ONTs. "
-        "BBF TR-385: Channel Termination. "
-        "One PON port typically supports 32–128 ONTs on the same fibre. "
-        "IVY component class: ianahw:port (subtyped as pon:PONPort)." .
+        "Downlink PON port on an OLT that serves a fibre split towards ONTs. BBF TR-385: Channel Termination. One PON port typically supports 32–128 ONTs on the same fibre. IVY component class: ianahw:port (subtyped as pon:PONPort)." .
 
 pon:UNIPort a owl:Class ;
     rdfs:subClassOf pon:PortComponent ;
     rdfs:label "UNI Port (User Network Interface)" ;
     rdfs:comment
-        "Subscriber-facing Ethernet port on an ONT. "
-        "BBF TR-385: User Network Interface (UNI). "
-        "IVY component class: ianahw:port (subtyped as pon:UNIPort). "
-        "This is the resource that is allocated per HSI service — "
-        "inUse is set true by the handler when a service is provisioned." .
+        "Subscriber-facing Ethernet port on an ONT. BBF TR-385: User Network Interface (UNI). IVY component class: ianahw:port (subtyped as pon:UNIPort). This is the resource that is allocated per HSI service — inUse is set true by the handler when a service is provisioned." .
 
 pon:UplinkPort a owl:Class ;
     rdfs:subClassOf pon:PortComponent ;
     rdfs:label "Uplink Port" ;
     rdfs:comment
-        "Network-facing port on an OLT connecting to the aggregation network. "
-        "IVY component class: ianahw:port (subtyped as pon:UplinkPort)." .
+        "Network-facing port on an OLT connecting to the aggregation network. IVY component class: ianahw:port (subtyped as pon:UplinkPort)." .
 
 pon:ANIPort a owl:Class ;
     rdfs:subClassOf pon:PortComponent ;
     rdfs:label "ANI Port (Access Node Interface)" ;
     rdfs:comment
-        "PON-facing port on an ONT (the fibre side). "
-        "BBF TR-385: Access Node Interface (ANI). "
-        "IVY component class: ianahw:port (subtyped as pon:ANIPort)." .
+        "PON-facing port on an ONT (the fibre side). BBF TR-385: Access Node Interface (ANI). IVY component class: ianahw:port (subtyped as pon:ANIPort)." .
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -134,18 +111,12 @@ pon:ANIPort a owl:Class ;
 pon:SVLANAllocation a owl:Class ;
     rdfs:label "S-VLAN Allocation" ;
     rdfs:comment
-        "An S-TAG (outer VLAN) assignment on an OLT uplink port for a specific "
-        "service type (e.g., all HSI subscribers on this OLT share S-TAG 100). "
-        "S-TAG is fixed per service-type per OLT uplink and assigned by the "
-        "aggregation domain operator." .
+        "An S-TAG (outer VLAN) assignment on an OLT uplink port for a specific service type (e.g., all HSI subscribers on this OLT share S-TAG 100). S-TAG is fixed per service-type per OLT uplink and assigned by the aggregation domain operator." .
 
 pon:CTAGAllocation a owl:Class ;
     rdfs:label "C-TAG Allocation" ;
     rdfs:comment
-        "A C-TAG (inner VLAN) instance allocated from an SVLANAllocation pool "
-        "for one subscriber service. "
-        "inUse is set true by the handler when the C-TAG is assigned to a service "
-        "and false when the service is torn down." .
+        "A C-TAG (inner VLAN) instance allocated from an SVLANAllocation pool for one subscriber service. inUse is set true by the handler when the C-TAG is assigned to a service and false when the service is torn down." .
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -216,56 +187,49 @@ pon:neId a owl:DatatypeProperty ;
     rdfs:domain pon:NetworkElement ;
     rdfs:range xsd:string ;
     rdfs:comment
-        "Unique identifier for this network element within the management domain. "
-        "Aligns to nwi:network-element/ne-id (yang:string, mandatory key)." ;
+        "Unique identifier for this network element within the management domain. Aligns to nwi:network-element/ne-id (yang:string, mandatory key)." ;
     skos:exactMatch nwi:ne-id .
 
 pon:uuid a owl:DatatypeProperty ;
     rdfs:label "UUID" ;
     rdfs:range xsd:string ;
     rdfs:comment
-        "Universally Unique Identifier. "
-        "Aligns to nwi:basic-common-entity-attributes/uuid (yang:uuid)." ;
+        "Universally Unique Identifier. Aligns to nwi:basic-common-entity-attributes/uuid (yang:uuid)." ;
     skos:exactMatch nwi:uuid .
 
 pon:name a owl:DatatypeProperty ;
     rdfs:label "Name" ;
     rdfs:range xsd:string ;
     rdfs:comment
-        "Human-readable operator-assigned name. "
-        "Aligns to nwi:basic-common-entity-attributes/name." ;
+        "Human-readable operator-assigned name. Aligns to nwi:basic-common-entity-attributes/name." ;
     skos:exactMatch nwi:name .
 
 pon:description a owl:DatatypeProperty ;
     rdfs:label "Description" ;
     rdfs:range xsd:string ;
     rdfs:comment
-        "Free-text description. "
-        "Aligns to nwi:basic-common-entity-attributes/description." ;
+        "Free-text description. Aligns to nwi:basic-common-entity-attributes/description." ;
     skos:exactMatch nwi:description .
 
 pon:serialNumber a owl:DatatypeProperty ;
     rdfs:label "Serial Number" ;
     rdfs:range xsd:string ;
     rdfs:comment
-        "Vendor serial number for the physical device. "
-        "Aligns to nwi:component-attributes/serial-number." ;
+        "Vendor serial number for the physical device. Aligns to nwi:component-attributes/serial-number." ;
     skos:exactMatch nwi:serial-number .
 
 pon:productName a owl:DatatypeProperty ;
     rdfs:label "Product Name" ;
     rdfs:range xsd:string ;
     rdfs:comment
-        "Vendor product name / model string. "
-        "Aligns to nwi:ne-component-common-entity-attributes/product-name." ;
+        "Vendor product name / model string. Aligns to nwi:ne-component-common-entity-attributes/product-name." ;
     skos:exactMatch nwi:product-name .
 
 pon:mfgName a owl:DatatypeProperty ;
     rdfs:label "Manufacturer Name" ;
     rdfs:range xsd:string ;
     rdfs:comment
-        "Manufacturer / vendor name. "
-        "Aligns to nwi:ne-component-common-entity-attributes/mfg-name." ;
+        "Manufacturer / vendor name. Aligns to nwi:ne-component-common-entity-attributes/mfg-name." ;
     skos:exactMatch nwi:mfg-name .
 
 pon:componentId a owl:DatatypeProperty ;
@@ -273,8 +237,7 @@ pon:componentId a owl:DatatypeProperty ;
     rdfs:domain pon:PortComponent ;
     rdfs:range xsd:string ;
     rdfs:comment
-        "Unique identifier for this component within its network element. "
-        "Aligns to nwi:component-attributes/component-id (mandatory key)." ;
+        "Unique identifier for this component within its network element. Aligns to nwi:component-attributes/component-id (mandatory key)." ;
     skos:exactMatch nwi:component-id .
 
 
@@ -290,9 +253,7 @@ pon:hasPONPort a owl:ObjectProperty ;
     rdfs:domain pon:OLT ;
     rdfs:range pon:PONPort ;
     rdfs:comment
-        "Relates an OLT to its PON port (Channel Termination) components. "
-        "Inverse of pon:belongsToOLT. "
-        "IVY: component[class=pon:PONPort]/parent → OLT NE." .
+        "Relates an OLT to its PON port (Channel Termination) components. Inverse of pon:belongsToOLT. IVY: component[class=pon:PONPort]/parent → OLT NE." .
 
 pon:belongsToOLT a owl:ObjectProperty ;
     rdfs:label "belongs to OLT" ;
@@ -312,17 +273,14 @@ pon:connectedToPONPort a owl:ObjectProperty ;
     rdfs:domain pon:ONT ;
     rdfs:range pon:PONPort ;
     rdfs:comment
-        "Relates an ONT to the OLT PON port it is registered on. "
-        "This represents the fibre/PON logical link (G.984/G.9807 ONU activation). "
-        "IVY: this would be a port-ref grouping from ANI component to OLT component." .
+        "Relates an ONT to the OLT PON port it is registered on. This represents the fibre/PON logical link (G.984/G.9807 ONU activation). IVY: this would be a port-ref grouping from ANI component to OLT component." .
 
 pon:hasUNIPort a owl:ObjectProperty ;
     rdfs:label "has UNI Port" ;
     rdfs:domain pon:ONT ;
     rdfs:range pon:UNIPort ;
     rdfs:comment
-        "Relates an ONT to its subscriber-facing UNI port components. "
-        "IVY: component[class=pon:UNIPort]/parent → ONT NE." .
+        "Relates an ONT to its subscriber-facing UNI port components. IVY: component[class=pon:UNIPort]/parent → ONT NE." .
 
 pon:belongsToONT a owl:ObjectProperty ;
     rdfs:label "belongs to ONT" ;
@@ -346,16 +304,14 @@ pon:fromSVLAN a owl:ObjectProperty ;
 pon:region a owl:ObjectProperty ;
     rdfs:label "region" ;
     rdfs:comment
-        "Associates a network element or resource with a geographic/operational region. "
-        "Aligns to nil:location (IETF IVY location augmentation)." ;
+        "Associates a network element or resource with a geographic/operational region. Aligns to nil:location (IETF IVY location augmentation)." ;
     skos:closeMatch nil:location .
 
 pon:location a owl:DatatypeProperty ;
     rdfs:label "location" ;
     rdfs:range xsd:string ;
     rdfs:comment
-        "Free-text or structured location string (e.g., central office name). "
-        "Aligns to nil:location/nil:address." ;
+        "Free-text or structured location string (e.g., central office name). Aligns to nil:location/nil:address." ;
     skos:closeMatch nil:physical-address .
 
 
@@ -367,24 +323,19 @@ pon:operationalState a owl:ObjectProperty ;
     rdfs:label "operational state" ;
     rdfs:range pon:OperationalState ;
     rdfs:comment
-        "Current operational state of this resource. "
-        "Values: pon:Up, pon:Down, pon:Degraded. "
-        "Applicable to: OLT, ONT, PONPort, UNIPort, UplinkPort." .
+        "Current operational state of this resource. Values: pon:Up, pon:Down, pon:Degraded. Applicable to: OLT, ONT, PONPort, UNIPort, UplinkPort." .
 
 pon:administrativeState a owl:ObjectProperty ;
     rdfs:label "administrative state" ;
     rdfs:range pon:AdministrativeState ;
     rdfs:comment
-        "Administrative (operator-controlled) state. "
-        "Values: pon:Enabled, pon:Disabled." .
+        "Administrative (operator-controlled) state. Values: pon:Enabled, pon:Disabled." .
 
 pon:provisioningState a owl:ObjectProperty ;
     rdfs:label "provisioning state" ;
     rdfs:range pon:ProvisioningState ;
     rdfs:comment
-        "Service provisioning state of the resource. "
-        "Values: pon:Ready, pon:Configuring, pon:Failed. "
-        "pon:Ready is required before the resource can be allocated to a service." .
+        "Service provisioning state of the resource. Values: pon:Ready, pon:Configuring, pon:Failed. pon:Ready is required before the resource can be allocated to a service." .
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -397,21 +348,13 @@ pon:inUse a owl:DatatypeProperty ;
     rdfs:label "in use" ;
     rdfs:range xsd:boolean ;
     rdfs:comment
-        "Whether this resource is currently allocated to an active service. "
-        "Applies to: pon:UNIPort (one service per UNI), pon:CTAGAllocation. "
-        "WRITE-BACK: the intent handler sets this to true when selecting the "
-        "resource and false when the service is terminated or the intent is deleted. "
-        "The set constructor set:resourcesWithPropertyObject filters on this value "
-        "to find available resources." .
+        "Whether this resource is currently allocated to an active service. Applies to: pon:UNIPort (one service per UNI), pon:CTAGAllocation. WRITE-BACK: the intent handler sets this to true when selecting the resource and false when the service is terminated or the intent is deleted. The set constructor set:resourcesWithPropertyObject filters on this value to find available resources." .
 
 pon:assignedToService a owl:DatatypeProperty ;
     rdfs:label "assigned to service" ;
     rdfs:range xsd:string ;
     rdfs:comment
-        "The TMF921 intent ID (UUID string) of the service currently using this resource. "
-        "WRITE-BACK: set to the intent UUID when inUse becomes true; "
-        "cleared (removed) when inUse becomes false. "
-        "Enables the handler to identify which intent owns each resource for teardown." .
+        "The TMF921 intent ID (UUID string) of the service currently using this resource. WRITE-BACK: set to the intent UUID when inUse becomes true; cleared (removed) when inUse becomes false. Enables the handler to identify which intent owns each resource for teardown." .
 
 pon:serviceType a owl:ObjectProperty ;
     rdfs:label "service type" ;
@@ -424,17 +367,14 @@ pon:sTag a owl:DatatypeProperty ;
     rdfs:domain pon:SVLANAllocation ;
     rdfs:range xsd:integer ;
     rdfs:comment
-        "IEEE 802.1ad outer VLAN tag (Service VLAN). "
-        "Fixed per service-type per OLT — shared across all subscribers of that "
-        "service type on the OLT uplink." .
+        "IEEE 802.1ad outer VLAN tag (Service VLAN). Fixed per service-type per OLT — shared across all subscribers of that service type on the OLT uplink." .
 
 pon:cTag a owl:DatatypeProperty ;
     rdfs:label "C-TAG" ;
     rdfs:domain pon:CTAGAllocation ;
     rdfs:range xsd:integer ;
     rdfs:comment
-        "IEEE 802.1ad inner VLAN tag (Customer VLAN). "
-        "Unique per subscriber service instance within the SVLAN pool." .
+        "IEEE 802.1ad inner VLAN tag (Customer VLAN). Unique per subscriber service instance within the SVLAN pool." .
 
 pon:cTagMin a owl:DatatypeProperty ;
     rdfs:label "C-TAG pool minimum" ;
@@ -452,8 +392,7 @@ pon:subscriberId a owl:DatatypeProperty ;
     rdfs:label "subscriber ID" ;
     rdfs:range xsd:string ;
     rdfs:comment
-        "Operator-assigned subscriber identifier. "
-        "Set on a CTAGAllocation when assigned to a subscriber service." .
+        "Operator-assigned subscriber identifier. Set on a CTAGAllocation when assigned to a subscriber service." .
 
 
 # ══════════════════════════════════════════════════════════════════════════════
