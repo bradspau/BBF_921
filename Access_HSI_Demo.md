@@ -377,8 +377,9 @@ tmf921-agg dataset                  tmf921-access dataset
         │      expression: "can you deliver ≥ 100 Mbps with an available UNI?"
         │
         │      Access domain evaluates:
-        │        - set:resourcesOfType pon:UNIPort → free UNIs from inventory
-        │        - quan:atLeast ≥ 100 Mbps → checks observations
+        │        - DeliveryExpectation + set:resourcesOfType pon:UNIPort
+        │        - set:resourcesWithPropertyObject (inUse false, opState Up)
+        │        - passes if ≥1 free UNI found in inventory (no observation needed)
         │        - auto-transitions probe: ACTIVE (pass) or TERMINATED (fail)
         │
         ├─ 3. Poll :8001/intent/{probeId} for ACTIVE or TERMINATED
@@ -428,34 +429,24 @@ Expected: the UNI selected by the handler shows `pon:inUse true` and
 
 ### If the probe fails
 
-If the access domain has no observations for the bandwidth metric and
-`HANDLER_LIMITS_JSON` is unset, `quan:atLeast ≥ 100 Mbps` has no observed value
-and evaluates as Degraded → probe transitions to `TERMINATED`.
-
-To make the probe pass, post an observation **after** the probe is created (get the
-probe UUID from the script output):
+The probe resolves purely against the resource inventory — no metric observations
+are needed. It fails only if all UNIs in the inventory are already in use
+(`pon:inUse true`) or operationally down. Verify the resource state:
 
 ```bash
-PROBE_ID="<uuid from script output>"
-
-curl -s -X POST \
-  "http://localhost:8001/tmf-api/intentManagement/v5/intent/$PROBE_ID/observation" \
-  -H "Content-Type: application/json" \
-  -d '{"metricUri": "http://broadband-forum.org/Intent#ProbeDownstreamMetric", "value": 150.0}'
-
-# Re-trigger evaluation
-curl -s -X PATCH \
-  "http://localhost:8001/tmf-api/intentManagement/v5/intent/$PROBE_ID" \
-  -H "Content-Type: application/merge-patch+json" \
-  -d '{"description": "re-evaluate with observation"}'
+curl -s -X POST "http://localhost:3030/tmf921-access/sparql" \
+  -H "Content-Type: application/sparql-query" \
+  -d "
+PREFIX pon: <http://broadband-forum.org/ont/pon-resource#>
+SELECT ?uni ?inUse ?opState WHERE {
+  GRAPH <http://tmforum.org/api/v5/resources> {
+    ?uni a pon:UNIPort ; pon:inUse ?inUse ; pon:operationalState ?opState .
+  }
+}" | python3 -m json.tool
 ```
 
-Alternatively, set the operator fallback limits before starting:
-
-```bash
-export HANDLER_LIMITS_JSON='{"atLeast": 100.0}'
-# then restart the access domain
-```
+If all UNIs are in use, restart with `sudo docker compose down -v` to reset the
+resource inventory to its initial state (7 free UNIs).
 
 ---
 

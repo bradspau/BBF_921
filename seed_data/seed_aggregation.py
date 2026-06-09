@@ -33,34 +33,25 @@ import httpx
 BASE = "/tmf-api/intentManagement/v5"
 _SEED_DIR = Path(__file__).parent
 
-# Minimal ProbeIntent Turtle — asks "can you deliver >= 100 Mbps downstream?"
+# Minimal ProbeIntent Turtle — asks "does the access domain have a free UNI for HSI?"
+# Uses DeliveryExpectation + set constructor: passes if ≥1 free operational UNI exists.
+# No runtime metric observation needed — resolves purely against the resource inventory.
 _PROBE_TURTLE = """\
 @prefix bbf:  <http://broadband-forum.org/Intent#> .
 @prefix pon:  <http://broadband-forum.org/ont/pon-resource#> .
 @prefix icm:  <http://tio.models.tmforum.org/tio/v3.6.0/IntentCommonModel/> .
-@prefix log:  <http://tio.models.tmforum.org/tio/v3.6.0/LogicalOperators/> .
 @prefix set:  <http://tio.models.tmforum.org/tio/v3.6.0/SetOperators/> .
-@prefix quan: <http://tio.models.tmforum.org/tio/v3.6.0/QuantityOntology/> .
 @prefix rdf:  <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
-@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
-@prefix xsd:  <http://www.w3.org/2001/XMLSchema#> .
 
-bbf:ProbeExpectation a icm:PropertyExpectation ;
-    log:allOf ( bbf:ProbeDownstreamCondition
-                bbf:ProbeUNIAvailabilityCondition ) .
+# Does the access domain have at least one free, operational UNI available for HSI?
+bbf:ProbeExpectation  a icm:DeliveryExpectation ;
+    icm:target       bbf:ProbeSelectedUNI ;
+    icm:deliveryType pon:HSIService ;
+    icm:chooseFrom   bbf:ProbeAvailableUNIs .
 
-# Can the access domain deliver >= 100 Mbps downstream?
-bbf:ProbeDownstreamCondition a icm:Condition ;
-    quan:atLeast ( bbf:ProbeDownstreamMetric
-                   [ rdf:value "100"^^xsd:decimal ; quan:unit "Mbps"^^xsd:string ] ) .
+bbf:ProbeSelectedUNI  a icm:Target .
 
-bbf:ProbeDownstreamMetric a icm:Metric .
-
-# Is there at least one available UNI in the North Region?
-bbf:ProbeUNIAvailabilityCondition a icm:Condition ;
-    log:match ( bbf:ProbeAvailableUNIs rdf:type pon:UNIPort ) .
-
-bbf:ProbeAvailableUNIs a icm:Target ;
+bbf:ProbeAvailableUNIs  a icm:Target ;
     set:resourcesOfType              pon:UNIPort ;
     set:resourcesWithPropertyObject ( pon:inUse            false ) ;
     set:resourcesWithPropertyObject ( pon:operationalState pon:Up ) .
