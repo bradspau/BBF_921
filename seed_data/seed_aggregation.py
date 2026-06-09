@@ -50,12 +50,9 @@ bbf:ProbeExpectation a icm:PropertyExpectation ;
                 bbf:ProbeUNIAvailabilityCondition ) .
 
 # Can the access domain deliver >= 100 Mbps downstream?
-bbf:ProbeDownstreamCondition a icm:Condition, quan:quanatLeast ;
-    rdf:first bbf:ProbeDownstreamMetric ;
-    rdf:rest  [ rdf:first bbf:ProbeDLBound ] .
-
-bbf:ProbeDLBound rdf:value "100"^^xsd:decimal ;
-    quan:unit "Mbps"^^xsd:string .
+bbf:ProbeDownstreamCondition a icm:Condition ;
+    quan:atLeast ( bbf:ProbeDownstreamMetric
+                   [ rdf:value "100"^^xsd:decimal ; quan:unit "Mbps"^^xsd:string ] ) .
 
 bbf:ProbeDownstreamMetric a icm:Metric .
 

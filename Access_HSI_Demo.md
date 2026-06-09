@@ -378,7 +378,7 @@ tmf921-agg dataset                  tmf921-access dataset
         │
         │      Access domain evaluates:
         │        - set:resourcesOfType pon:UNIPort → free UNIs from inventory
-        │        - quan:quanatLeast ≥ 100 Mbps → checks observations
+        │        - quan:atLeast ≥ 100 Mbps → checks observations
         │        - auto-transitions probe: ACTIVE (pass) or TERMINATED (fail)
         │
         ├─ 3. Poll :8001/intent/{probeId} for ACTIVE or TERMINATED
@@ -429,7 +429,7 @@ Expected: the UNI selected by the handler shows `pon:inUse true` and
 ### If the probe fails
 
 If the access domain has no observations for the bandwidth metric and
-`HANDLER_LIMITS_JSON` is unset, `quan:quanatLeast ≥ 100 Mbps` has no observed value
+`HANDLER_LIMITS_JSON` is unset, `quan:atLeast ≥ 100 Mbps` has no observed value
 and evaluates as Degraded → probe transitions to `TERMINATED`.
 
 To make the probe pass, post an observation **after** the probe is created (get the
@@ -453,7 +453,7 @@ curl -s -X PATCH \
 Alternatively, set the operator fallback limits before starting:
 
 ```bash
-export HANDLER_LIMITS_JSON='{"quanatLeast": 100.0}'
+export HANDLER_LIMITS_JSON='{"atLeast": 100.0}'
 # then restart the access domain
 ```
 
