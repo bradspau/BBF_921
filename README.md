@@ -128,10 +128,12 @@ The Fuseki admin console is available at http://localhost:3030 (user: `admin`, p
 
 ## Walkthrough Guides
 
+Both guides are fully verified end-to-end.
+
 | Guide | Startup mode | Covers |
 |---|---|---|
 | [`HSI_DEMO.md`](HSI_DEMO.md) | Default (`docker compose up`) | Steps 1–10: create intent, submit observations, Fulfilled/Degraded cycle, ProbeIntent (Flow 1), Best/Propose (Flow 3) |
-| [`Access_HSI_Demo.md`](Access_HSI_Demo.md) | `--profile access` | PON resource inventory, UNI + CTAG set-constructor selection, resource write-back, F-interface dual-domain demo |
+| [`Access_HSI_Demo.md`](Access_HSI_Demo.md) | `--profile access` | Steps 1–8: PON resource inventory, UNI + CTAG set-constructor selection, resource write-back, Degraded/Fulfilled cycle, F-interface dual-domain ProbeIntent demo |
 
 ---
 
