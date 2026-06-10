@@ -4444,6 +4444,7 @@ ex:Delivery  a icm:DeliveryExpectation ;
         delivery = next(c for c in conds if c.get("type") == "DeliveryExpectation")
         assert delivery["passed"] is True
         assert delivery["candidates"] == 2
+        assert "selected" in delivery  # handler uses this for write-back
 
     def test_resources_with_property_object_filters(self):
         """set:resourcesWithPropertyObject as predicate filters by prop=obj."""
@@ -4472,6 +4473,7 @@ ex:Delivery  a icm:DeliveryExpectation ;
         delivery = next(c for c in result["conditions"] if c.get("type") == "DeliveryExpectation")
         assert delivery["passed"] is True
         assert delivery["candidates"] == 2  # P1 and P3 only
+        assert "selected" in delivery
 
     def test_multiple_property_filters_intersected(self):
         """Multiple resourcesWithPropertyObject predicates AND together."""
@@ -4501,6 +4503,7 @@ ex:Delivery  a icm:DeliveryExpectation ;
         delivery = next(c for c in result["conditions"] if c.get("type") == "DeliveryExpectation")
         assert delivery["passed"] is True
         assert delivery["candidates"] == 1  # only P1 passes both filters
+        assert delivery["selected"] == "http://example.org/P1"
 
     def test_empty_pool_delivery_fails(self):
         """No candidates → DeliveryExpectation fails even with chooseFrom."""
@@ -4527,3 +4530,4 @@ ex:Delivery  a icm:DeliveryExpectation ;
         delivery = next(c for c in result["conditions"] if c.get("type") == "DeliveryExpectation")
         assert delivery["passed"] is False
         assert delivery["candidates"] == 0
+        assert "selected" not in delivery  # no candidates means no selection

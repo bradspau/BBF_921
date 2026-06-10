@@ -6,7 +6,11 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from src.handler.dispatcher import _try_best_propose, _try_probe_transition
+from src.handler.dispatcher import (
+    _try_best_propose,
+    _try_probe_transition,
+    _try_resource_allocation,
+)
 
 _TURTLE = """\
 @prefix quan: <http://tio.models.tmforum.org/tio/v3.6.0/QuantityOntology/> .
@@ -269,3 +273,74 @@ class TestTryBestPropose:
             await _try_best_propose("test-id", result, intent_repo, hub_repo)
 
         mock_ns.return_value.schedule.assert_not_called()
+
+
+# ── Resource allocation write-back ───────────────────────────────────────────
+
+class TestTryResourceAllocation:
+    """_try_resource_allocation calls write_resource_allocation for normal Intents only."""
+
+    @pytest.mark.asyncio
+    async def test_allocates_for_normal_intent(self, intent_repo):
+        intent_repo.get_by_id.return_value = {
+            "id": "test-id",
+            "@type": "Intent",
+            "lifecycleStatus": "ACTIVE",
+        }
+        result = {
+            "intentHandlingState": "Fulfilled",
+            "conditions": [
+                {"type": "DeliveryExpectation",
+                 "selected": "http://example.org/UNI-001-1",
+                 "candidates": 1,
+                 "passed": True}
+            ],
+        }
+        mock_client = AsyncMock()
+
+        with patch(
+            "src.handler.dispatcher.write_resource_allocation",
+            AsyncMock(),
+        ) as mock_wra:
+            await _try_resource_allocation("test-id", result, intent_repo, mock_client)
+
+        mock_wra.assert_awaited_once_with("test-id", result, mock_client)
+
+    @pytest.mark.asyncio
+    async def test_skips_probe_intent(self, intent_repo):
+        intent_repo.get_by_id.return_value = {
+            "id": "test-id",
+            "@type": "ProbeIntent",
+            "lifecycleStatus": "ACTIVE",
+        }
+        result = {
+            "intentHandlingState": "Fulfilled",
+            "conditions": [
+                {"type": "DeliveryExpectation",
+                 "selected": "http://example.org/UNI-001-1",
+                 "candidates": 1,
+                 "passed": True}
+            ],
+        }
+        mock_client = AsyncMock()
+
+        with patch(
+            "src.handler.dispatcher.write_resource_allocation",
+            AsyncMock(),
+        ) as mock_wra:
+            await _try_resource_allocation("test-id", result, intent_repo, mock_client)
+
+        mock_wra.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_skips_when_intent_not_found(self, intent_repo):
+        intent_repo.get_by_id.return_value = None
+        mock_client = AsyncMock()
+
+        with patch(
+            "src.handler.dispatcher.write_resource_allocation",
+            AsyncMock(),
+        ) as mock_wra:
+            await _try_resource_allocation("test-id", {}, intent_repo, mock_client)
+
+        mock_wra.assert_not_awaited()

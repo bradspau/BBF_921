@@ -134,6 +134,59 @@ def build_handler_state_turtle(intent_id: str, result: dict, timestamp: str) -> 
     return "\n\n".join(blocks) + "\n"
 
 
+_PON = "http://broadband-forum.org/ont/pon-resource#"
+
+
+async def write_resource_allocation(
+    intent_id: str,
+    result: dict,
+    client: FusekiClient,
+) -> None:
+    """
+    After a Fulfilled evaluation, mark each selected resource as in-use in the
+    resource inventory graph.
+
+    Reads DeliveryExpectation conditions that carry a "selected" URI and issues
+    a SPARQL UPDATE to the RESOURCES_GRAPH: sets pon:inUse true and
+    pon:assignedToService to the intent UUID.  Idempotent — the WHERE clause
+    requires pon:inUse false so re-evaluation does not double-allocate.
+    """
+    from src.graph.namespaces import RESOURCES_GRAPH
+
+    conditions = result.get("conditions", [])
+    allocated = [
+        c for c in conditions
+        if c.get("type") == "DeliveryExpectation" and "selected" in c
+    ]
+    if not allocated:
+        return
+
+    for cond in allocated:
+        resource_uri = cond["selected"]
+        sparql = (
+            f"PREFIX pon: <{_PON}>\n"
+            f"WITH <{RESOURCES_GRAPH}>\n"
+            f"DELETE {{ <{resource_uri}> pon:inUse false }}\n"
+            f"INSERT {{ <{resource_uri}> pon:inUse true ;\n"
+            f'                           pon:assignedToService "{intent_id}" }}\n'
+            f"WHERE  {{ <{resource_uri}> pon:inUse false }}"
+        )
+        try:
+            await client.update(sparql)
+            logger.info(
+                "write_resource_allocation: allocated %s to intent %s",
+                resource_uri,
+                intent_id,
+            )
+        except Exception as exc:
+            logger.error(
+                "write_resource_allocation: failed for %s / intent %s: %s",
+                resource_uri,
+                intent_id,
+                exc,
+            )
+
+
 async def write_handler_state(
     intent_id: str,
     result: dict,

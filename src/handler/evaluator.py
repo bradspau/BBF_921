@@ -1209,10 +1209,15 @@ def _eval_delivery_expectation(g: rdflib.Graph, node: rdflib.term.Node) -> tuple
     if choose_from is not None:
         candidates = list(g.objects(choose_from, RDFS.member))
         passed = len(candidates) > 0
-        return passed, [{"type": "DeliveryExpectation",
-                         "deliveryType": str(delivery_type),
-                         "candidates": len(candidates),
-                         "passed": passed}]
+        cond: dict = {
+            "type": "DeliveryExpectation",
+            "deliveryType": str(delivery_type),
+            "candidates": len(candidates),
+            "passed": passed,
+        }
+        if candidates:
+            cond["selected"] = str(candidates[0])
+        return passed, [cond]
 
     return False, [{"type": "DeliveryExpectation",
                     "deliveryType": str(delivery_type),

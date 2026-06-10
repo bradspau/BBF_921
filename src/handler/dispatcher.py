@@ -19,7 +19,7 @@ from src.graph.repositories.intent_report_repository import IntentReportReposito
 from src.graph.store import FusekiClient
 from src.handler.evaluator import evaluate_intent
 from src.handler.limits import apply_best_effort_bounds
-from src.handler.state_writer import write_handler_state
+from src.handler.state_writer import write_handler_state, write_resource_allocation
 from src.services.notification_service import EventType, NotificationService
 
 logger = logging.getLogger(__name__)
@@ -116,6 +116,25 @@ async def _try_probe_transition(
         intent_id,
         target,
     )
+
+
+async def _try_resource_allocation(
+    intent_id: str,
+    result: dict,
+    intent_repo: IntentRepository,
+    client: FusekiClient,
+) -> None:
+    """
+    Flow — Resource allocation: after a Fulfilled evaluation, mark selected
+    resources as in-use in the inventory graph.
+
+    Skipped for ProbeIntents: they check resource availability without claiming
+    any resource.
+    """
+    intent = await intent_repo.get_by_id(intent_id)
+    if intent is None or intent.get("@type") == "ProbeIntent":
+        return
+    await write_resource_allocation(intent_id, result, client)
 
 
 async def _try_best_propose(
@@ -246,6 +265,8 @@ async def dispatch_evaluation(
             if state == "Fulfilled":
                 # Flow 2: normal Intent DEGRADED → ACTIVE when re-evaluation passes.
                 await _try_auto_activate(intent_id, intent_repo, hub_repo)
+                # Resource write-back: mark selected inventory items as in-use.
+                await _try_resource_allocation(intent_id, result, intent_repo, client)
             elif state == "Degraded":
                 # Flow 3: normal Intent — propose best-effort bounds to owner.
                 await _try_best_propose(intent_id, result, intent_repo, hub_repo)

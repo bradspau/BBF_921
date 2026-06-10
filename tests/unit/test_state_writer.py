@@ -15,7 +15,11 @@ from unittest.mock import AsyncMock, patch
 
 from src.graph.store import FusekiClient
 from src.graph.nodes import handler_state_graph_uri, handler_state_condition_uri, intent_node
-from src.handler.state_writer import build_handler_state_turtle, write_handler_state
+from src.handler.state_writer import (
+    build_handler_state_turtle,
+    write_handler_state,
+    write_resource_allocation,
+)
 
 FUSEKI   = "http://localhost:3030"
 DATASET  = "tmf921"
@@ -290,3 +294,70 @@ class TestDispatcherCallsStateWriter:
         assert len(write_calls) == 1
         assert write_calls[0][0] == INTENT_ID
         assert write_calls[0][1] == eval_result
+
+
+# ── write_resource_allocation ─────────────────────────────────────────────────
+
+
+class TestWriteResourceAllocation:
+
+    @respx.mock
+    async def test_issues_sparql_update_for_selected_resource(self):
+        """Fulfilled evaluation with 'selected' key triggers a SPARQL UPDATE."""
+        route = respx.post(f"{FUSEKI}/{DATASET}/update").mock(
+            return_value=httpx.Response(200)
+        )
+        result = {
+            "intentHandlingState": "Fulfilled",
+            "conditions": [
+                {"type": "DeliveryExpectation",
+                 "selected": "http://example.org/UNI-001",
+                 "candidates": 1,
+                 "passed": True}
+            ],
+        }
+        async with FusekiClient(FUSEKI, DATASET) as client:
+            await write_resource_allocation(INTENT_ID, result, client)
+
+        assert route.called
+        from urllib.parse import unquote_plus
+        body = unquote_plus(route.calls[0].request.content.decode())
+        assert "UNI-001" in body
+        assert INTENT_ID in body
+        assert "pon:inUse" in body
+
+    @respx.mock
+    async def test_no_update_when_no_selected_condition(self):
+        """No DeliveryExpectation with 'selected' → no SPARQL call."""
+        route = respx.post(f"{FUSEKI}/{DATASET}/update").mock(
+            return_value=httpx.Response(200)
+        )
+        result = {
+            "intentHandlingState": "Fulfilled",
+            "conditions": [
+                {"type": "quanatLeast", "observed": 120.0, "bound": 100.0, "passed": True}
+            ],
+        }
+        async with FusekiClient(FUSEKI, DATASET) as client:
+            await write_resource_allocation(INTENT_ID, result, client)
+
+        assert not route.called
+
+    @respx.mock
+    async def test_update_failure_does_not_raise(self):
+        """A 500 from Fuseki is logged but not re-raised."""
+        respx.post(f"{FUSEKI}/{DATASET}/update").mock(
+            return_value=httpx.Response(500, text="error")
+        )
+        result = {
+            "intentHandlingState": "Fulfilled",
+            "conditions": [
+                {"type": "DeliveryExpectation",
+                 "selected": "http://example.org/UNI-001",
+                 "candidates": 1,
+                 "passed": True}
+            ],
+        }
+        async with FusekiClient(FUSEKI, DATASET) as client:
+            await write_resource_allocation(INTENT_ID, result, client)
+        # no exception raised
