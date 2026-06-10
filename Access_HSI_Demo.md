@@ -407,7 +407,48 @@ A successful run prints each step and ends with:
 Probe result: lifecycleStatus = ACTIVE
 Probe passed — posting full HSI Intent to access domain…
   Created Intent: <uuid> — AGG→ACCESS: HSI service request — BBF_SUB_12345
+  Monitor: GET http://localhost:8001/tmf-api/intentManagement/v5/intent/<uuid>
 ```
+
+### Post performance observations for the HSI intent
+
+The HSI intent has five performance conditions (bandwidth, jitter, latency, packet loss,
+availability). It starts Degraded until observations are posted. Copy the intent UUID
+from the seed script output and set it:
+
+```bash
+F_INTENT=<uuid-from-seed-aggregation-output>
+BBF="http://broadband-forum.org/Intent#"
+BASE="http://localhost:8001/tmf-api/intentManagement/v5/intent/$F_INTENT/observation"
+
+# Downstream bandwidth: 150 Mbps (≥ 100)
+curl -s -X POST "$BASE" -H "Content-Type: application/json" \
+  -d "{\"metricUri\": \"${BBF}DownstreamBandwidthMetric\", \"value\": 150.0}"
+
+# Upstream bandwidth: 30 Mbps (≥ 20)
+curl -s -X POST "$BASE" -H "Content-Type: application/json" \
+  -d "{\"metricUri\": \"${BBF}UpstreamBandwidthMetric\", \"value\": 30.0}"
+
+# Latency: 8 ms (< 25)
+curl -s -X POST "$BASE" -H "Content-Type: application/json" \
+  -d "{\"metricUri\": \"${BBF}LatencyMetric\", \"value\": 8.0}"
+
+# Packet loss: 0.02% (< 0.1)
+curl -s -X POST "$BASE" -H "Content-Type: application/json" \
+  -d "{\"metricUri\": \"${BBF}PacketLossMetric\", \"value\": 0.02}"
+
+# Jitter: 1.2 ms (< 3.0)
+curl -s -X POST "$BASE" -H "Content-Type: application/json" \
+  -d "{\"metricUri\": \"${BBF}JitterMetric\", \"value\": 1.2}"
+
+sleep 2
+
+# Confirm Fulfilled
+curl -s "http://localhost:8001/tmf-api/intentManagement/v5/intent/$F_INTENT/intentReport" \
+  | python3 -c "import sys,json; r=json.load(sys.stdin); print(r[0]['intentHandlingState'])"
+```
+
+Expected: **`Fulfilled`** — all DeliveryExpectation and performance conditions pass.
 
 ### Verify resource state after the F-interface demo
 
@@ -429,8 +470,8 @@ ORDER BY ?uni
 " | python3 -m json.tool
 ```
 
-Expected: the UNI selected by the handler shows `pon:inUse true` and
-`pon:assignedToService` set to the HSI intent UUID posted by the aggregation domain.
+Expected: one UNI shows `pon:inUse true` and `pon:assignedToService` set to `$F_INTENT`
+(the HSI intent UUID posted by the aggregation domain). All other free UNIs remain `false`.
 
 ### If the probe fails
 
