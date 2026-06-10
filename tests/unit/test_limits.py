@@ -160,6 +160,25 @@ class TestApplyBestEffortBoundsEdgeCases:
         _, changed = apply_best_effort_bounds(_TURTLE_ONE, conditions)
         assert not changed
 
+    def test_predicate_form_updated(self):
+        """Predicate-form quan:atLeast (bbf:Metric [rdf:value ...]) is substituted."""
+        turtle = """\
+@prefix bbf:  <http://example.org/> .
+@prefix quan: <http://tio.models.tmforum.org/tio/v3.6.0/QuantityOntology/> .
+@prefix rdf:  <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix xsd:  <http://www.w3.org/2001/XMLSchema#> .
+
+bbf:Check  quan:atLeast ( bbf:DownstreamMetric [ rdf:value "500"^^xsd:decimal ] ) .
+"""
+        conditions = [
+            {"type": "atLeast", "observed": Decimal("150.0"), "bound": Decimal("500.0"), "passed": False}
+        ]
+        new_turtle, changed = apply_best_effort_bounds(turtle, conditions)
+        assert changed
+        # Verify the old bound is gone and new bound appears in the output Turtle.
+        assert '"500"' not in new_turtle
+        assert "150" in new_turtle
+
     def test_short_name_alias_updated(self):
         turtle = """\
 @prefix quan: <http://tio.models.tmforum.org/tio/v3.6.0/QuantityOntology/> .

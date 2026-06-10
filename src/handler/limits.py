@@ -92,6 +92,11 @@ def apply_best_effort_bounds(
         logger.warning("apply_best_effort_bounds: Turtle parse error: %s", exc)
         return None, False
 
+    # Normalise predicate-form quantity conditions (e.g. ?s quan:atLeast (...))
+    # to type-form so the substitution loop can find them via RDF.type lookup.
+    from src.handler.evaluator import _normalize_qty_predicates
+    _normalize_qty_predicates(g)
+
     # Best-effort value keyed by condition type, built from evaluator output.
     best_by_type: dict[str, Decimal] = {}
     for cond in conditions:
