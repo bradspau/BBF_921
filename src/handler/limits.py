@@ -92,11 +92,6 @@ def apply_best_effort_bounds(
         logger.warning("apply_best_effort_bounds: Turtle parse error: %s", exc)
         return None, False
 
-    # Normalise predicate-form quantity conditions (e.g. ?s quan:atLeast (...))
-    # to type-form so the substitution loop can find them via RDF.type lookup.
-    from src.handler.evaluator import _normalize_qty_predicates
-    _normalize_qty_predicates(g)
-
     # Best-effort value keyed by condition type, built from evaluator output.
     best_by_type: dict[str, Decimal] = {}
     for cond in conditions:
@@ -122,12 +117,33 @@ def apply_best_effort_bounds(
     changed = False
     for type_name, best_val in best_by_type.items():
         type_uri = _QUAN_TYPE_URIS[type_name]
+
+        # Type-form: node is typed as the condition class (a quan:atLeast).
         for node in list(g.subjects(RDF.type, type_uri)):
-            # Navigate two-arg structure: node → rdf:rest → rdf:first (bound node)
             rest = g.value(node, RDF.rest)
             if rest is None:
                 continue
             bnd_node = g.value(rest, RDF.first)
+            if bnd_node is None:
+                continue
+            old_lit = g.value(bnd_node, RDF.value)
+            if old_lit is None:
+                continue
+            try:
+                if Decimal(str(old_lit)) == best_val:
+                    continue
+            except InvalidOperation:
+                pass
+            g.remove((bnd_node, RDF.value, old_lit))
+            g.add((bnd_node, RDF.value, rdflib.Literal(str(best_val), datatype=XSD.decimal)))
+            changed = True
+
+        # Predicate-form: type_uri is used as a predicate (?cond quan:atLeast (?list)).
+        # Handle directly to avoid normalization polluting the graph with duplicate
+        # blank-node references that break serialization round-trips.
+        for _cond, list_node in list(g.subject_objects(type_uri)):
+            rest = g.value(list_node, RDF.rest)
+            bnd_node = g.value(rest, RDF.first) if rest is not None else None
             if bnd_node is None:
                 continue
             old_lit = g.value(bnd_node, RDF.value)
