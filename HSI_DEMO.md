@@ -38,7 +38,7 @@ the store. Always wipe and restart before running this demo to avoid seeing old 
 
 ```bash
 sudo docker compose down -v   # -v removes named volumes → clean Fuseki store
-sudo docker compose up --build
+sudo docker compose --profile standalone up --build
 ```
 
 ### Dev server (wipe Fuseki TDB2 manually)
@@ -58,7 +58,7 @@ sudo rm -rf /tmp/fuseki-data   # adjust to your fuseki --loc path
 ### Option A — Docker (recommended)
 
 ```bash
-sudo docker compose up --build
+sudo docker compose --profile standalone up --build
 ```
 
 This starts Fuseki (port 3030) and the API (port 8000) together. Wait for:

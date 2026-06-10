@@ -18,8 +18,11 @@ services:
       retries: 10
       start_period: 30s
 
-  # ── Default (no profile) — behaves as before ────────────────────────────────
+  # ── Standalone (single-domain) — simple demo without F-interface ────────────
+  # Start: docker compose --profile standalone up --build
+  # Seed:  python seed_data/seed_intents.py
   app:
+    profiles: [standalone]
     build: .
     ports:
       - "8000:8000"

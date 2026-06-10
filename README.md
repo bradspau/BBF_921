@@ -63,12 +63,12 @@ ontology/
 
 Three startup modes are available depending on what you want to run.
 
-### Default (single domain)
+### Standalone (single domain)
 
-The original single-domain setup — no profile required.
+A single-domain setup on port **8000**. Use this for the `HSI_DEMO.md` walkthrough.
 
 ```bash
-docker compose up --build
+docker compose --profile standalone up --build
 
 # Seed sample data
 python seed_data/seed_intents.py
@@ -132,7 +132,7 @@ Both guides are fully verified end-to-end.
 
 | Guide | Startup mode | Covers |
 |---|---|---|
-| [`HSI_DEMO.md`](HSI_DEMO.md) | Default (`docker compose up`) | Steps 1–10: create intent, submit observations, Fulfilled/Degraded cycle, ProbeIntent (Flow 1), Best/Propose (Flow 3) |
+| [`HSI_DEMO.md`](HSI_DEMO.md) | `--profile standalone` | Steps 1–10: create intent, submit observations, Fulfilled/Degraded cycle, ProbeIntent (Flow 1), Best/Propose (Flow 3) |
 | [`Access_HSI_Demo.md`](Access_HSI_Demo.md) | `--profile access` | Steps 1–8: PON resource inventory, UNI + CTAG set-constructor selection, resource write-back, Degraded/Fulfilled cycle, F-interface dual-domain ProbeIntent demo |
 
 ---
