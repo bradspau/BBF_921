@@ -179,6 +179,38 @@ class TestBuildHandlerStateTurtle:
             assert g.value(cond, _IMO.conditionPassed) is not None
             assert g.value(cond, _IMO.observedValue) is None
 
+    def test_delivery_expectation_selected_resource_written(self):
+        """DeliveryExpectation with 'selected' key writes imo:selectedResource as URI."""
+        result = {
+            "intentHandlingState": "Fulfilled",
+            "reason": None,
+            "conditions": [
+                {"type": "DeliveryExpectation",
+                 "deliveryType": "urn:T",
+                 "selected": "http://example.org/UNI-001",
+                 "candidates": 1,
+                 "passed": True},
+            ],
+        }
+        g = _parse(build_handler_state_turtle(INTENT_ID, result, _TS))
+        cond0 = handler_state_condition_uri(INTENT_ID, 0)
+        selected = g.value(cond0, _IMO.selectedResource)
+        assert str(selected) == "http://example.org/UNI-001"
+
+    def test_delivery_expectation_no_selected_when_missing(self):
+        """DeliveryExpectation without 'selected' key writes no imo:selectedResource."""
+        result = {
+            "intentHandlingState": "Fulfilled",
+            "reason": None,
+            "conditions": [
+                {"type": "DeliveryExpectation", "deliveryType": "urn:T",
+                 "member_count": 1, "passed": True},
+            ],
+        }
+        g = _parse(build_handler_state_turtle(INTENT_ID, result, _TS))
+        cond0 = handler_state_condition_uri(INTENT_ID, 0)
+        assert g.value(cond0, _IMO.selectedResource) is None
+
     def test_structural_error_condition_has_error_predicate(self):
         g = _parse(build_handler_state_turtle(INTENT_ID, _STRUCT_ERROR_RESULT, _TS))
         cond0 = handler_state_condition_uri(INTENT_ID, 0)

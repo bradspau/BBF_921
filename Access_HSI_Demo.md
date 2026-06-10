@@ -295,19 +295,24 @@ curl -s -X POST "http://localhost:3030/tmf921-access/sparql" \
   -d "
 PREFIX imo: <http://tio.models.tmforum.org/tio/v3.6.0/IntentManagementOntology/>
 
-SELECT ?type ?observed ?bound ?passed
+SELECT ?type ?observed ?bound ?selected ?passed
 WHERE {
   GRAPH <http://tmforum.org/api/v5/intents/$ACCESS_INTENT/handlerState> {
     ?intent imo:hasConditionResult ?c .
     ?c a ?type ;
        imo:conditionPassed ?passed .
-    OPTIONAL { ?c imo:observedValue ?observed }
-    OPTIONAL { ?c imo:boundValue    ?bound }
+    OPTIONAL { ?c imo:observedValue   ?observed }
+    OPTIONAL { ?c imo:boundValue      ?bound }
+    OPTIONAL { ?c imo:selectedResource ?selected }
   }
 }
 ORDER BY ?type
 " | python3 -m json.tool
 ```
+
+Expected: the two `DeliveryExpectation` rows each show a `selected` URI — one for the
+chosen `pon:UNIPort` and one for the chosen `pon:CTAGAllocation`. The quantity conditions
+(`atLeast`, `smaller`) show numeric `observed`/`bound` pairs.
 
 ---
 

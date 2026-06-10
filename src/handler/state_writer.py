@@ -36,6 +36,13 @@ Schema written on every evaluation cycle:
         imo:upperBound           "..."^^xsd:decimal ;
         imo:evaluatedAt          "..."^^xsd:dateTime .
 
+    # DeliveryExpectation with a set-constructor pool (icm:chooseFrom):
+    <condition/N>
+        a                        quan:DeliveryExpectation ;
+        imo:conditionPassed      "true"|"false"^^xsd:boolean ;
+        imo:selectedResource     <resource-uri> ;         # omitted when no candidate
+        imo:evaluatedAt          "..."^^xsd:dateTime .
+
     # structural error conditions:
     <condition/N>
         a                        quan:{type} ;
@@ -111,8 +118,9 @@ def _condition_block(intent_id: str, index: int, c: dict, timestamp: str) -> str
             ("imo:observedValue", f'"{c["observed"]}"^^xsd:decimal'),
             ("imo:boundValue",    f'"{c["bound"]}"^^xsd:decimal'),
         ]
-    # Non-quantity conditions (logMatch, DeliveryExpectation, setForAll, etc.)
-    # carry no numeric operands — only conditionPassed (and error if present).
+    elif c.get("selected"):
+        # DeliveryExpectation: record which resource the handler selected.
+        pairs.append(("imo:selectedResource", f'<{c["selected"]}>'))
 
     pairs.append(("imo:evaluatedAt", f'"{timestamp}"^^xsd:dateTime'))
     return _po_block(str(handler_state_condition_uri(intent_id, index)), pairs)
