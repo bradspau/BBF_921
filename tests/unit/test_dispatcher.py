@@ -297,6 +297,7 @@ class TestTryResourceAllocation:
             ],
         }
         mock_client = AsyncMock()
+        mock_client.ask.return_value = False  # no prior allocation
 
         with patch(
             "src.handler.dispatcher.write_resource_allocation",
@@ -305,6 +306,34 @@ class TestTryResourceAllocation:
             await _try_resource_allocation("test-id", result, intent_repo, mock_client)
 
         mock_wra.assert_awaited_once_with("test-id", result, mock_client)
+
+    @pytest.mark.asyncio
+    async def test_skips_when_already_allocated(self, intent_repo):
+        """Idempotency guard: if resources are already assigned to this intent, skip."""
+        intent_repo.get_by_id.return_value = {
+            "id": "test-id",
+            "@type": "Intent",
+            "lifecycleStatus": "ACTIVE",
+        }
+        result = {
+            "intentHandlingState": "Fulfilled",
+            "conditions": [
+                {"type": "DeliveryExpectation",
+                 "selected": "http://example.org/UNI-001-1",
+                 "candidates": 1,
+                 "passed": True}
+            ],
+        }
+        mock_client = AsyncMock()
+        mock_client.ask.return_value = True  # already allocated
+
+        with patch(
+            "src.handler.dispatcher.write_resource_allocation",
+            AsyncMock(),
+        ) as mock_wra:
+            await _try_resource_allocation("test-id", result, intent_repo, mock_client)
+
+        mock_wra.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_skips_probe_intent(self, intent_repo):

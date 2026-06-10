@@ -118,6 +118,9 @@ async def _try_probe_transition(
     )
 
 
+_PON_NS = "http://broadband-forum.org/ont/pon-resource#"
+
+
 async def _try_resource_allocation(
     intent_id: str,
     result: dict,
@@ -128,11 +131,23 @@ async def _try_resource_allocation(
     Flow — Resource allocation: after a Fulfilled evaluation, mark selected
     resources as in-use in the inventory graph.
 
-    Skipped for ProbeIntents: they check resource availability without claiming
-    any resource.
+    Skipped for ProbeIntents (availability check, no allocation) and when
+    resources are already allocated to this intent (idempotency guard — prevents
+    each re-evaluation cycle from allocating additional resources).
     """
     intent = await intent_repo.get_by_id(intent_id)
     if intent is None or intent.get("@type") == "ProbeIntent":
+        return
+    from src.graph.namespaces import RESOURCES_GRAPH
+    already = await client.ask(
+        f'ASK {{ GRAPH <{RESOURCES_GRAPH}> {{'
+        f' ?r <{_PON_NS}assignedToService> "{intent_id}" }} }}'
+    )
+    if already:
+        logger.debug(
+            "_try_resource_allocation: resources already allocated for intent %s — skipping",
+            intent_id,
+        )
         return
     await write_resource_allocation(intent_id, result, client)
 
