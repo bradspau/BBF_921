@@ -136,6 +136,34 @@ Both guides are fully verified end-to-end.
 
 A self-contained walkthrough using a synthetic BBF High-Speed Internet (HSI) intent expression. No external resource inventory is required — all structural facts are asserted inline in the expression Turtle.
 
+**Intent expression (inline Turtle posted in Step 1):**
+
+```turtle
+bbf:HSICompositeExpectation
+    log:allOf ( bbf:DeliveryCheck bbf:UNICheck bbf:PerformanceCheck ) .
+
+# Structural conditions — facts asserted inline so no inventory is needed
+bbf:DeliveryCheck  a icm:DeliveryExpectation ;
+    icm:target       bbf:SelectedUNIInterface ;
+    icm:deliveryType bbf:HSIService .
+bbf:SelectedUNIInterface  rdfs:member bbf:HSIServiceInstance .
+bbf:HSIServiceInstance    a bbf:HSIService .
+
+bbf:UNICheck  log:allOf ( bbf:UNIUpCondition bbf:UNIReadyCondition ) .
+bbf:UNIUpCondition    log:match ( bbf:SelectedUNIInterface bbf:operationalState  bbf:OperationalUp ) .
+bbf:UNIReadyCondition log:match ( bbf:SelectedUNIInterface bbf:provisioningState bbf:Ready ) .
+bbf:SelectedUNIInterface  bbf:operationalState bbf:OperationalUp ;
+                          bbf:provisioningState bbf:Ready .
+
+# Metric conditions — satisfied by POSTing met:Observation records
+bbf:PerformanceCheck  log:allOf ( bbf:DL_Check bbf:UL_Check bbf:Lat_Check bbf:Jit_Check bbf:PL_Check ) .
+bbf:DL_Check  quan:atLeast ( bbf:DownstreamBandwidthMetric [ rdf:value "100"^^xsd:decimal ] ) .
+bbf:UL_Check  quan:atLeast ( bbf:UpstreamBandwidthMetric   [ rdf:value  "20"^^xsd:decimal ] ) .
+bbf:Lat_Check quan:smaller ( bbf:LatencyMetric             [ rdf:value  "25"^^xsd:decimal ] ) .
+bbf:Jit_Check quan:smaller ( bbf:JitterMetric              [ rdf:value   "3"^^xsd:decimal ] ) .
+bbf:PL_Check  quan:smaller ( bbf:PacketLossMetric          [ rdf:value "0.1"^^xsd:decimal ] ) .
+```
+
 **What it covers:**
 
 | Step | What happens |
@@ -159,6 +187,8 @@ A self-contained walkthrough using a synthetic BBF High-Speed Internet (HSI) int
 **F-interface (Step 8):** `docker compose --profile access --profile aggregation up --build` (ports 8000 + 8001)
 
 Extends the HSI demo with a real PON network inventory (2 OLTs, 5 ONTs, 10 UNI ports, 7 CTAG allocations). The evaluator resolves TIO set constructors (`set:resourcesOfType`, `set:resourcesWithPropertyObject`) against the live inventory to select a free UNI and CTAG, then writes them back as in-use when the intent is fulfilled.
+
+**Intent expression:** [`seed_data/hsionlyintent_v0.5.ttl`](seed_data/hsionlyintent_v0.5.ttl) — the full BBF HSI intent using TIO set constructors to query the live PON inventory. Seeded via `python seed_data/seed_access.py`.
 
 **What it covers:**
 
