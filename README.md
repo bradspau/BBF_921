@@ -130,10 +130,56 @@ The Fuseki admin console is available at http://localhost:3030 (user: `admin`, p
 
 Both guides are fully verified end-to-end.
 
-| Guide | Startup mode | Covers |
-|---|---|---|
-| [`HSI_DEMO.md`](HSI_DEMO.md) | `--profile standalone` | Steps 1–10: create intent, submit observations, Fulfilled/Degraded cycle, ProbeIntent (Flow 1), Best/Propose (Flow 3) |
-| [`Access_HSI_Demo.md`](Access_HSI_Demo.md) | `--profile access` | Steps 1–8: PON resource inventory, UNI + CTAG set-constructor selection, resource write-back, Degraded/Fulfilled cycle, F-interface dual-domain ProbeIntent demo |
+### HSI_DEMO.md — Single-domain HSI service intent
+
+**Startup:** `docker compose --profile standalone up --build` (port 8000)
+
+A self-contained walkthrough using a synthetic BBF High-Speed Internet (HSI) intent expression. No external resource inventory is required — all structural facts are asserted inline in the expression Turtle.
+
+**What it covers:**
+
+| Step | What happens |
+|---|---|
+| 1 | Create an HSI intent with a `log:allOf` expression covering delivery, UNI state, and 5 performance conditions |
+| 2 | Observe the initial `Degraded` report — performance metric conditions fail with "no observation" |
+| 3 | POST 5 metric observations (downstream BW, upstream BW, latency, jitter, packet loss) |
+| 4 | Confirm `Fulfilled` — all conditions pass |
+| 5 | Spike latency above the threshold → `Degraded` |
+| 6 | Post a within-threshold latency observation → self-heals to `Fulfilled` |
+| 7 | Force re-evaluation via `PATCH description` (no new observation needed) |
+| 8 | Inspect the `handlerState` named graph in Fuseki directly via SPARQL and Graph Store Protocol |
+| 9 | **Flow 1 — ProbeIntent:** create a passing and a failing probe; observe auto-transition to `ACTIVE` / `TERMINATED` |
+| 10 | **Flow 3 — Best/Propose:** post an intent with an unreachable 500 Mbps bound; handler substitutes the observed 150 Mbps and patches the expression; owner approves → `Fulfilled` |
+
+---
+
+### Access_HSI_Demo.md — Access domain with PON resource inventory
+
+**Startup:** `docker compose --profile access up --build` (port 8001)  
+**F-interface (Step 8):** `docker compose --profile access --profile aggregation up --build` (ports 8000 + 8001)
+
+Extends the HSI demo with a real PON network inventory (2 OLTs, 5 ONTs, 10 UNI ports, 7 CTAG allocations). The evaluator resolves TIO set constructors (`set:resourcesOfType`, `set:resourcesWithPropertyObject`) against the live inventory to select a free UNI and CTAG, then writes them back as in-use when the intent is fulfilled.
+
+**What it covers:**
+
+| Step | What happens |
+|---|---|
+| 1 | Seed the full `hsionlyintent_v0.5.ttl` expression — set-constructor conditions select from the PON inventory |
+| 2 | Initial `Degraded` — structural conditions pass (inventory has free resources), performance conditions fail (no observations) |
+| 3 | POST 5 metric observations |
+| 4 | Confirm `Fulfilled` — all conditions including set-constructor UNI/CTAG selection pass |
+| 5 | Query the `resources` named graph in Fuseki — exactly one UNI and one CTAG now show `pon:inUse true` and `pon:assignedToService <intent-uuid>` |
+| 6 | Query the `handlerState` graph — `imo:selectedResource` records which UNI and CTAG were chosen |
+| 7 | Latency spike → `Degraded`; recovery observation → `Fulfilled` (resources stay reserved throughout) |
+| 8 | **F-interface demo:** aggregation domain posts a `ProbeIntent` to the access domain asking "can you deliver ≥ 100 Mbps with a free UNI?"; probe auto-transitions to `ACTIVE`; aggregation domain follows up with the full HSI intent; performance observations drive it to `Fulfilled`; write-back records the allocated UNI |
+
+**PON inventory topology** (abridged):
+```
+OLT-001  →  UNI-001-1, UNI-001-2, UNI-002-1 (pre-assigned), UNI-002-2, UNI-003-1, UNI-003-2
+OLT-002  →  UNI-004-1, UNI-004-2, UNI-005-1 (Down — excluded), UNI-005-2
+            CTAG pool: 6 free CTAGs, 1 pre-assigned (CTAG-N-002)
+```
+The set constructors find 7 free, operationally-up UNIs and 6 free CTAGs; the evaluator selects the first candidate from each pool.
 
 ---
 
