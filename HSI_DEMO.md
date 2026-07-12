@@ -5,6 +5,25 @@ through the TMF921 API, verify that the intent handler evaluates conditions corr
 and observe how the `intentHandlingState` transitions between `Fulfilled` and `Degraded`
 as metric observations are submitted.
 
+Note that the TMF Ontology is loaded as default into a graph and can be queried by Jena terminal
+
+  PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+
+  SELECT ?s ?p ?o
+  WHERE {
+    GRAPH <http://tmforum.org/api/v5/ontology> {
+      ?s ?p ?o
+    }
+  }
+  LIMIT 100
+
+  or 
+
+    curl -G http://localhost:3030/tmf921/sparql \
+    --data-urlencode 'query=SELECT ?s ?p ?o WHERE { GRAPH <http://tmforum.org/api/v5/ontology> { ?s ?p ?o } } LIMIT 100'
+
+
+
 > For the access domain demo using real PON resource inventory and UNI/CTAG allocation,
 > see [`Access_HSI_Demo.md`](Access_HSI_Demo.md).
 
@@ -178,6 +197,26 @@ The `intentHandlingReason` lists the five metric conditions that failed because 
 > stack, wipe the volumes (`docker compose down -v`), and start from the beginning.
 > The ordering fix in `intent_report_repository.py` ensures the newest report is
 > always index `[0]`, but stale data from old code requires a clean restart.
+
+You can also use the Jena Fuseki Sparql console to query for the icm:result for each of the conditions and the intent itself.
+  
+  ```bash
+  cat <<EOF
+  PREFIX imo: <http://tio.models.tmforum.org/tio/v3.6.0/IntentManagementOntology/>
+  PREFIX icm: <http://tio.models.tmforum.org/tio/v3.6.0/IntentCommonModel/>
+
+  SELECT ?condition ?type ?passed ?icmResult
+  WHERE {
+    GRAPH <http://tmforum.org/api/v5/intents/{uuid}/handlerState> {
+      <http://tmforum.org/api/v5/intents/{uuid}> imo:hasConditionResult ?condition .
+      ?condition a ?type ;
+                 imo:conditionPassed ?passed .
+      OPTIONAL { ?condition icm:result ?icmResult }
+    }
+  }
+  EOF
+  ```
+  Copy the output (with the real UUID inline) and paste it into the fuseki Query tab, then click Run query.
 
 ---
 

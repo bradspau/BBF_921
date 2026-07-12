@@ -5,6 +5,13 @@
 **OAS:** `docs/spec/TMF921_Intent_Management_v5.0.0_oas.yaml`
 **Repo:** [FILL: GitHub URL + branch]
 
+## Writing Style
+- Use Australian English spelling (e.g. "colour", "organisation", "behaviour").
+- Use a comma instead of an em dash in text output.
+
+## Claude Code Statusline
+- `~/.claude/statusline-command.sh` renders `model [progress-bar] NN%` (context window used) in the terminal footer, configured via `statusLine.command` in `~/.claude/settings.json`.
+
 ## Commands
 - Generate models: `make models`
 - Run tests: `.venv/bin/pytest tests/ -v --cov=src --cov-fail-under=80`
