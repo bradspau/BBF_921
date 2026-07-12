@@ -49,6 +49,17 @@ Schema written on every evaluation cycle:
         imo:conditionPassed      "false"^^xsd:boolean ;
         imo:conditionError       "..."^^xsd:string ;
         imo:evaluatedAt          "..."^^xsd:dateTime .
+
+    # ObservationReportingExpectation / GuaranteeReportingExpectation /
+    # ValidityReportingExpectation — the icm:result already asserted on the
+    # source expression node is mirrored back onto the condition node so the
+    # rule-firing outcome is queryable from handlerState directly. Omitted
+    # when the source node had no icm:result asserted (nothing to mirror).
+    <condition/N>
+        a                        quan:{type} ;
+        imo:conditionPassed      "true"|"false"^^xsd:boolean ;
+        icm:result               "true"|"false"^^xsd:boolean ;
+        imo:evaluatedAt          "..."^^xsd:dateTime .
 """
 from __future__ import annotations
 
@@ -66,10 +77,12 @@ logger = logging.getLogger(__name__)
 
 _IMO  = "http://tio.models.tmforum.org/tio/v3.6.0/IntentManagementOntology/"
 _QUAN = "http://tio.models.tmforum.org/tio/v3.6.0/QuantityOntology/"
+_ICM  = "http://tio.models.tmforum.org/tio/v3.6.0/IntentCommonModel/"
 
 _PREFIXES = (
     f"@prefix imo:  <{_IMO}> .\n"
     f"@prefix quan: <{_QUAN}> .\n"
+    f"@prefix icm:  <{_ICM}> .\n"
     "@prefix xsd:  <http://www.w3.org/2001/XMLSchema#> .\n"
 )
 
@@ -121,6 +134,11 @@ def _condition_block(intent_id: str, index: int, c: dict, timestamp: str) -> str
     elif c.get("selected"):
         # DeliveryExpectation: record which resource the handler selected.
         pairs.append(("imo:selectedResource", f'<{c["selected"]}>'))
+    elif "result" in c and c["result"] is not None:
+        # Observation/Guarantee/ValidityReportingExpectation: mirror the
+        # icm:result already asserted on the source node back onto the
+        # condition node so the rule-firing outcome is queryable here too.
+        pairs.append(("icm:result", f'"{c["result"]}"^^xsd:boolean'))
 
     pairs.append(("imo:evaluatedAt", f'"{timestamp}"^^xsd:dateTime'))
     return _po_block(str(handler_state_condition_uri(intent_id, index)), pairs)

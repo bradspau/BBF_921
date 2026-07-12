@@ -27,6 +27,7 @@ INTENT_ID = "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa"
 
 _IMO  = rdflib.Namespace("http://tio.models.tmforum.org/tio/v3.6.0/IntentManagementOntology/")
 _QUAN = rdflib.Namespace("http://tio.models.tmforum.org/tio/v3.6.0/QuantityOntology/")
+_ICM  = rdflib.Namespace("http://tio.models.tmforum.org/tio/v3.6.0/IntentCommonModel/")
 _XSD  = rdflib.namespace.XSD
 
 _TS = "2026-06-04T09:00:00Z"
@@ -210,6 +211,49 @@ class TestBuildHandlerStateTurtle:
         g = _parse(build_handler_state_turtle(INTENT_ID, result, _TS))
         cond0 = handler_state_condition_uri(INTENT_ID, 0)
         assert g.value(cond0, _IMO.selectedResource) is None
+
+    def test_reporting_expectation_mirrors_icm_result_true(self):
+        """ObservationReportingExpectation with a source-asserted result of true
+        writes icm:result "true"^^xsd:boolean on the condition node."""
+        result = {
+            "intentHandlingState": "Fulfilled",
+            "reason": None,
+            "conditions": [
+                {"type": "ObservationReportingExpectation", "result": "true", "passed": True},
+            ],
+        }
+        g = _parse(build_handler_state_turtle(INTENT_ID, result, _TS))
+        cond0 = handler_state_condition_uri(INTENT_ID, 0)
+        assert str(g.value(cond0, _ICM.result)) == "true"
+
+    def test_reporting_expectation_mirrors_icm_result_false(self):
+        """GuaranteeReportingExpectation with a source-asserted result of false
+        writes icm:result "false"^^xsd:boolean on the condition node."""
+        result = {
+            "intentHandlingState": "Degraded",
+            "reason": None,
+            "conditions": [
+                {"type": "GuaranteeReportingExpectation", "result": "false", "passed": False},
+            ],
+        }
+        g = _parse(build_handler_state_turtle(INTENT_ID, result, _TS))
+        cond0 = handler_state_condition_uri(INTENT_ID, 0)
+        assert str(g.value(cond0, _ICM.result)) == "false"
+
+    def test_reporting_expectation_no_icm_result_when_absent(self):
+        """ValidityReportingExpectation with no source assertion (result=None)
+        writes no icm:result triple — nothing to mirror."""
+        result = {
+            "intentHandlingState": "Degraded",
+            "reason": None,
+            "conditions": [
+                {"type": "ValidityReportingExpectation", "result": None, "passed": False},
+            ],
+        }
+        g = _parse(build_handler_state_turtle(INTENT_ID, result, _TS))
+        cond0 = handler_state_condition_uri(INTENT_ID, 0)
+        assert g.value(cond0, _ICM.result) is None
+        assert str(g.value(cond0, _IMO.conditionPassed)) == "false"
 
     def test_structural_error_condition_has_error_predicate(self):
         g = _parse(build_handler_state_turtle(INTENT_ID, _STRUCT_ERROR_RESULT, _TS))
