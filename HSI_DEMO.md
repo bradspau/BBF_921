@@ -5,6 +5,39 @@ through the TMF921 API, verify that the intent handler evaluates conditions corr
 and observe how the `intentHandlingState` transitions between `Fulfilled` and `Degraded`
 as metric observations are submitted.
 
+## Key concepts: lifecycleStatus vs intentHandlingState
+
+Two different fields track two different things throughout this demo, don't confuse them:
+
+- **`lifecycleStatus`** (on the Intent resource itself) — the TMF921 FSM state, always
+  ALL-CAPS: `ACKNOWLEDGED`, `ACTIVE`, `FULFILLED`, `DEGRADED`, `SUSPENDED`, `TERMINATED`.
+  This is *workflow* state, it says who owns the next action (the handler waiting for
+  approval, the owner having accepted terms, etc.), not "are the conditions currently
+  met right now".
+
+- **`intentHandlingState`** (on each `IntentReport`, camelCase value: `Fulfilled` /
+  `Degraded`) — a purely technical, continuously re-evaluated signal: "given the
+  expression and the latest observations, do the conditions currently hold?" It's
+  recomputed on every evaluation cycle and does not by itself change `lifecycleStatus`.
+
+How they relate across the flows in this guide:
+
+- **Steps 1–7 (plain Intent):** `lifecycleStatus` stays `ACKNOWLEDGED` the whole time.
+  Only `intentHandlingState` flips between `Degraded` and `Fulfilled` as observations
+  are submitted. The FSM doesn't move; only the technical assessment does.
+- **Step 9 (ProbeIntent):** the handler auto-drives `lifecycleStatus` off the evaluation
+  result — `Fulfilled` → PATCHes `lifecycleStatus` to `ACTIVE`; `Degraded` → PATCHes it
+  to `TERMINATED`. This coupling is unique to ProbeIntent
+  (`dispatcher.py:_try_probe_transition()`).
+- **Step 10 (Best/Propose):** `intentHandlingState` goes `Degraded`, the handler proposes
+  a best-effort bound by PATCHing `expressionValue`, but `lifecycleStatus` deliberately
+  stays `ACKNOWLEDGED` — it waits for the owner to manually PATCH `lifecycleStatus: ACTIVE`
+  once they accept the reduced terms (Step 10e).
+
+See `docs/04-state-machine.md` for the full FSM transition rules.
+
+---
+
 Note that the TMF Ontology is loaded as default into a graph and can be queried by Jena terminal
 
   PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
@@ -207,8 +240,8 @@ You can also use the Jena Fuseki Sparql console to query for the icm:result for 
 
   SELECT ?condition ?type ?passed ?icmResult
   WHERE {
-    GRAPH <http://tmforum.org/api/v5/intents/{uuid}/handlerState> {
-      <http://tmforum.org/api/v5/intents/{uuid}> imo:hasConditionResult ?condition .
+    GRAPH <http://tmforum.org/api/v5/intents/$INTENT_ID/handlerState> {
+      <http://tmforum.org/api/v5/intents/$INTENT_ID> imo:hasConditionResult ?condition .
       ?condition a ?type ;
                  imo:conditionPassed ?passed .
       OPTIONAL { ?condition icm:result ?icmResult }
