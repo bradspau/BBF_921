@@ -107,6 +107,10 @@ sudo rm -rf /tmp/fuseki-data   # adjust to your fuseki --loc path
 
 ## Prerequisites
 
+Several steps below build request bodies with `jq` (readable multi-line Turtle via
+heredoc, folded into JSON with correct escaping). Install it if you don't have it:
+`sudo apt install jq` / `brew install jq`.
+
 ### Option A — Docker (recommended)
 
 ```bash
@@ -172,19 +176,94 @@ the relevant facts inline (see the demo expression below).
 This expression includes inline structural facts so every condition is evaluable.
 Metric values are supplied as observations in later steps.
 
+The Turtle expression is assigned to a shell variable via a heredoc (readable, real
+line breaks) and folded into the JSON body with `jq --arg`, which handles all escaping
+for you. Requires `jq` (`sudo apt install jq` / `brew install jq` if you don't have it).
+
 ```bash
-HSI_INTENT=$(curl -s -X POST http://localhost:8000/tmf-api/intentManagement/v5/intent \
-  -H "Content-Type: application/json" \
-  -d '{
+HSI_TURTLE=$(cat <<'TTL'
+@prefix bbf:  <http://broadband-forum.org/Intent#> .
+@prefix rdf:  <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix icm:  <http://tio.models.tmforum.org/tio/v3.6.0/IntentCommonModel/> .
+@prefix log:  <http://tio.models.tmforum.org/tio/v3.6.0/LogicalOperators/> .
+@prefix quan: <http://tio.models.tmforum.org/tio/v3.6.0/QuantityOntology/> .
+@prefix xsd:  <http://www.w3.org/2001/XMLSchema#> .
+
+bbf:HSICompositeExpectation
+    log:allOf (
+        bbf:DeliveryCheck
+        bbf:UNICheck
+        bbf:PerformanceCheck
+    ) .
+
+bbf:DeliveryCheck  a icm:DeliveryExpectation ;
+    icm:target       bbf:SelectedUNIInterface ;
+    icm:deliveryType bbf:HSIService .
+
+bbf:SelectedUNIInterface
+    rdfs:member bbf:HSIServiceInstance .
+
+bbf:HSIServiceInstance  a bbf:HSIService .
+
+bbf:UNICheck
+    log:allOf (
+        bbf:UNIUpCondition
+        bbf:UNIReadyCondition
+    ) .
+
+bbf:UNIUpCondition
+    log:match ( bbf:SelectedUNIInterface
+                bbf:operationalState
+                bbf:OperationalUp ) .
+
+bbf:UNIReadyCondition
+    log:match ( bbf:SelectedUNIInterface
+                bbf:provisioningState
+                bbf:Ready ) .
+
+bbf:SelectedUNIInterface
+    bbf:operationalState  bbf:OperationalUp ;
+    bbf:provisioningState bbf:Ready .
+
+bbf:PerformanceCheck
+    log:allOf (
+        bbf:DL_Check
+        bbf:UL_Check
+        bbf:Lat_Check
+        bbf:Jit_Check
+        bbf:PL_Check
+    ) .
+
+bbf:DL_Check  quan:atLeast ( bbf:DownstreamBandwidthMetric
+              [ rdf:value "100"^^xsd:decimal ] ) .
+
+bbf:UL_Check  quan:atLeast ( bbf:UpstreamBandwidthMetric
+              [ rdf:value "20"^^xsd:decimal ] ) .
+
+bbf:Lat_Check  quan:smaller ( bbf:LatencyMetric
+               [ rdf:value "25"^^xsd:decimal ] ) .
+
+bbf:Jit_Check  quan:smaller ( bbf:JitterMetric
+               [ rdf:value "3"^^xsd:decimal ] ) .
+
+bbf:PL_Check  quan:smaller ( bbf:PacketLossMetric
+              [ rdf:value "0.1"^^xsd:decimal ] ) .
+TTL
+)
+
+HSI_INTENT=$(jq -n --arg turtle "$HSI_TURTLE" '{
     "@type": "Intent",
     "name": "BBF HSI Service Demo",
     "lifecycleStatus": "ACKNOWLEDGED",
     "expression": {
       "@type": "TurtleExpression",
       "iri": "http://broadband-forum.org/Intent#HSIIntent",
-      "expressionValue": "@prefix bbf:  <http://broadband-forum.org/Intent#> .\n@prefix rdf:  <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .\n@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .\n@prefix icm:  <http://tio.models.tmforum.org/tio/v3.6.0/IntentCommonModel/> .\n@prefix log:  <http://tio.models.tmforum.org/tio/v3.6.0/LogicalOperators/> .\n@prefix quan: <http://tio.models.tmforum.org/tio/v3.6.0/QuantityOntology/> .\n@prefix xsd:  <http://www.w3.org/2001/XMLSchema#> .\n\nbbf:HSICompositeExpectation\n    log:allOf (\n        bbf:DeliveryCheck\n        bbf:UNICheck\n        bbf:PerformanceCheck\n    ) .\n\nbbf:DeliveryCheck  a icm:DeliveryExpectation ;\n    icm:target       bbf:SelectedUNIInterface ;\n    icm:deliveryType bbf:HSIService .\n\nbbf:SelectedUNIInterface\n    rdfs:member bbf:HSIServiceInstance .\n\nbbf:HSIServiceInstance  a bbf:HSIService .\n\nbbf:UNICheck\n    log:allOf (\n        bbf:UNIUpCondition\n        bbf:UNIReadyCondition\n    ) .\n\nbbf:UNIUpCondition\n    log:match ( bbf:SelectedUNIInterface\n                bbf:operationalState\n                bbf:OperationalUp ) .\n\nbbf:UNIReadyCondition\n    log:match ( bbf:SelectedUNIInterface\n                bbf:provisioningState\n                bbf:Ready ) .\n\nbbf:SelectedUNIInterface\n    bbf:operationalState  bbf:OperationalUp ;\n    bbf:provisioningState bbf:Ready .\n\nbbf:PerformanceCheck\n    log:allOf (\n        bbf:DL_Check\n        bbf:UL_Check\n        bbf:Lat_Check\n        bbf:Jit_Check\n        bbf:PL_Check\n    ) .\n\nbbf:DL_Check  quan:atLeast ( bbf:DownstreamBandwidthMetric\n              [ rdf:value \"100\"^^xsd:decimal ] ) .\n\nbbf:UL_Check  quan:atLeast ( bbf:UpstreamBandwidthMetric\n              [ rdf:value \"20\"^^xsd:decimal ] ) .\n\nbbf:Lat_Check  quan:smaller ( bbf:LatencyMetric\n               [ rdf:value \"25\"^^xsd:decimal ] ) .\n\nbbf:Jit_Check  quan:smaller ( bbf:JitterMetric\n               [ rdf:value \"3\"^^xsd:decimal ] ) .\n\nbbf:PL_Check  quan:smaller ( bbf:PacketLossMetric\n              [ rdf:value \"0.1\"^^xsd:decimal ] ) .\n"
+      "expressionValue": $turtle
     }
-  }')
+  }' | curl -s -X POST http://localhost:8000/tmf-api/intentManagement/v5/intent \
+  -H "Content-Type: application/json" \
+  -d @-)
 
 echo "$HSI_INTENT" | python3 -m json.tool
 INTENT_ID=$(echo "$HSI_INTENT" | python3 -c "import sys,json; print(json.load(sys.stdin)['id'])")
@@ -607,23 +686,36 @@ deterministic without requiring observations.
 ### 9a — Probe that passes (structural conditions satisfied inline)
 
 ```bash
-PROBE_PASS=$(curl -s -X POST http://localhost:8000/tmf-api/intentManagement/v5/intent \
-  -H "Content-Type: application/json" \
-  -d "{
-    \"@type\": \"ProbeIntent\",
-    \"name\": \"HSI Capability Probe — pass\",
-    \"intentRelationship\": [{
-      \"@type\": \"IntentRelationship\",
-      \"id\": \"$INTENT_ID\",
-      \"relationshipType\": \"relatesTo\",
-      \"referredType\": \"Intent\"
+PROBE_PASS_TURTLE=$(cat <<'TTL'
+@prefix bbf: <http://broadband-forum.org/Intent#> .
+@prefix log: <http://tio.models.tmforum.org/tio/v3.6.0/LogicalOperators/> .
+
+bbf:ProbeCheck log:allOf ( bbf:UNICheck ) .
+bbf:UNICheck log:match ( bbf:SelectedUNI bbf:operationalState bbf:OperationalUp ) .
+bbf:SelectedUNI bbf:operationalState bbf:OperationalUp .
+TTL
+)
+
+PROBE_PASS=$(jq -n \
+  --arg intentId "$INTENT_ID" \
+  --arg turtle "$PROBE_PASS_TURTLE" \
+  '{
+    "@type": "ProbeIntent",
+    "name": "HSI Capability Probe — pass",
+    "intentRelationship": [{
+      "@type": "IntentRelationship",
+      "id": $intentId,
+      "relationshipType": "relatesTo",
+      "referredType": "Intent"
     }],
-    \"expression\": {
-      \"@type\": \"TurtleExpression\",
-      \"iri\": \"http://broadband-forum.org/Intent#ProbePass\",
-      \"expressionValue\": \"@prefix bbf: <http://broadband-forum.org/Intent#> .\\n@prefix log: <http://tio.models.tmforum.org/tio/v3.6.0/LogicalOperators/> .\\n\\nbbf:ProbeCheck log:allOf ( bbf:UNICheck ) .\\nbbf:UNICheck log:match ( bbf:SelectedUNI bbf:operationalState bbf:OperationalUp ) .\\nbbf:SelectedUNI bbf:operationalState bbf:OperationalUp .\\n\"
+    "expression": {
+      "@type": "TurtleExpression",
+      "iri": "http://broadband-forum.org/Intent#ProbePass",
+      "expressionValue": $turtle
     }
-  }")
+  }' | curl -s -X POST http://localhost:8000/tmf-api/intentManagement/v5/intent \
+  -H "Content-Type: application/json" \
+  -d @-)
 
 echo "$PROBE_PASS" | python3 -m json.tool
 PROBE_PASS_ID=$(echo "$PROBE_PASS" | python3 -c "import sys,json; print(json.load(sys.stdin)['id'])")
@@ -643,23 +735,35 @@ Expected: **`ACTIVE`** — the handler accepted the terms.
 ### 9b — Probe that fails (structural condition absent)
 
 ```bash
-PROBE_FAIL=$(curl -s -X POST http://localhost:8000/tmf-api/intentManagement/v5/intent \
-  -H "Content-Type: application/json" \
-  -d "{
-    \"@type\": \"ProbeIntent\",
-    \"name\": \"HSI Capability Probe — fail\",
-    \"intentRelationship\": [{
-      \"@type\": \"IntentRelationship\",
-      \"id\": \"$INTENT_ID\",
-      \"relationshipType\": \"relatesTo\",
-      \"referredType\": \"Intent\"
+PROBE_FAIL_TURTLE=$(cat <<'TTL'
+@prefix bbf: <http://broadband-forum.org/Intent#> .
+@prefix log: <http://tio.models.tmforum.org/tio/v3.6.0/LogicalOperators/> .
+
+bbf:ProbeCheck log:allOf ( bbf:UNICheck ) .
+bbf:UNICheck log:match ( bbf:SelectedUNI bbf:operationalState bbf:Shutdown ) .
+TTL
+)
+
+PROBE_FAIL=$(jq -n \
+  --arg intentId "$INTENT_ID" \
+  --arg turtle "$PROBE_FAIL_TURTLE" \
+  '{
+    "@type": "ProbeIntent",
+    "name": "HSI Capability Probe — fail",
+    "intentRelationship": [{
+      "@type": "IntentRelationship",
+      "id": $intentId,
+      "relationshipType": "relatesTo",
+      "referredType": "Intent"
     }],
-    \"expression\": {
-      \"@type\": \"TurtleExpression\",
-      \"iri\": \"http://broadband-forum.org/Intent#ProbeFail\",
-      \"expressionValue\": \"@prefix bbf: <http://broadband-forum.org/Intent#> .\\n@prefix log: <http://tio.models.tmforum.org/tio/v3.6.0/LogicalOperators/> .\\n\\nbbf:ProbeCheck log:allOf ( bbf:UNICheck ) .\\nbbf:UNICheck log:match ( bbf:SelectedUNI bbf:operationalState bbf:Shutdown ) .\\n\"
+    "expression": {
+      "@type": "TurtleExpression",
+      "iri": "http://broadband-forum.org/Intent#ProbeFail",
+      "expressionValue": $turtle
     }
-  }")
+  }' | curl -s -X POST http://localhost:8000/tmf-api/intentManagement/v5/intent \
+  -H "Content-Type: application/json" \
+  -d @-)
 
 PROBE_FAIL_ID=$(echo "$PROBE_FAIL" | python3 -c "import sys,json; print(json.load(sys.stdin)['id'])")
 echo "ProbeIntent ID: $PROBE_FAIL_ID"
@@ -721,17 +825,28 @@ Post an intent whose bounds cannot be met by any observation. Then submit an
 observation so the evaluator knows the actual measured value.
 
 ```bash
-STRICT=$(curl -s -X POST http://localhost:8000/tmf-api/intentManagement/v5/intent \
-  -H "Content-Type: application/json" \
-  -d '{
+STRICT_TURTLE=$(cat <<'TTL'
+@prefix bbf: <http://broadband-forum.org/Intent#> .
+@prefix quan: <http://tio.models.tmforum.org/tio/v3.6.0/QuantityOntology/> .
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+
+bbf:DL_Check  quan:atLeast ( bbf:DownstreamBandwidthMetric
+              [ rdf:value "500"^^xsd:decimal ] ) .
+TTL
+)
+
+STRICT=$(jq -n --arg turtle "$STRICT_TURTLE" '{
     "@type": "Intent",
     "name": "HSI Flow3 Demo — strict bounds",
     "expression": {
       "@type": "TurtleExpression",
       "iri": "http://broadband-forum.org/Intent#StrictBW",
-      "expressionValue": "@prefix bbf: <http://broadband-forum.org/Intent#> .\n@prefix quan: <http://tio.models.tmforum.org/tio/v3.6.0/QuantityOntology/> .\n@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .\n@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .\n\nbbf:DL_Check  quan:atLeast ( bbf:DownstreamBandwidthMetric\n              [ rdf:value \"500\"^^xsd:decimal ] ) .\n"
+      "expressionValue": $turtle
     }
-  }')
+  }' | curl -s -X POST http://localhost:8000/tmf-api/intentManagement/v5/intent \
+  -H "Content-Type: application/json" \
+  -d @-)
 
 echo "$STRICT" | python3 -m json.tool
 STRICT_ID=$(echo "$STRICT" | python3 -c "import sys,json; print(json.load(sys.stdin)['id'])")
